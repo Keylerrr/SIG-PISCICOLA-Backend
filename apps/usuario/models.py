@@ -13,19 +13,9 @@ class Usuario(models.Model):
     token_reset_expiry = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(default=timezone.now)
-    deleted_at = models.DateTimeField(blank=True, null=True)
 
     class Meta:
         db_table = "usuario"
 
     def __str__(self):
         return f"{self.name} ({self.email})"
-
-    def soft_delete(self):
-        self.deleted_at = timezone.now()
-        self.save(update_fields=["deleted_at"])
-
-    @property
-    def is_deleted(self):
-        return self.deleted_at is not None
-

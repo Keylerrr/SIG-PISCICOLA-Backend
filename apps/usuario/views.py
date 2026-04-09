@@ -33,7 +33,6 @@ def get_tokens_for_user(user: Usuario) -> dict:
 
 class RegisterView(APIView):
    
-#    POST /api/auth/register/    
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -86,7 +85,6 @@ class RegisterView(APIView):
 
 class VerifyEmailView(APIView):
 
-#    GET /api/auth/verify/<token>/
 
     permission_classes = [AllowAny]
 
@@ -94,7 +92,6 @@ class VerifyEmailView(APIView):
         try:
             user = Usuario.objects.get(
                 token_reset=token,
-                deleted_at__isnull=True,
             )
         except Usuario.DoesNotExist:
             return Response(
@@ -124,7 +121,6 @@ class VerifyEmailView(APIView):
         )
 
 class LoginView(APIView):
-#    POST /api/auth/login/
 
     permission_classes = [AllowAny]
 
@@ -137,7 +133,7 @@ class LoginView(APIView):
         password = serializer.validated_data["password"]
 
         try:
-            user = Usuario.objects.get(email=email, deleted_at__isnull=True)
+            user = Usuario.objects.get(email=email)
         except Usuario.DoesNotExist:
             return Response(
                 {"error": "Invalid credentials."},
@@ -168,12 +164,11 @@ class LoginView(APIView):
 
 
 class UpdateUsuarioView(APIView):
-#    PATCH /api/users/<user_id>/
     permission_classes = [IsAuthenticated]
 
     def patch(self, request, user_id):
         try:
-            user = Usuario.objects.get(id=user_id, deleted_at__isnull=True)
+            user = Usuario.objects.get(id=user_id)
         except Usuario.DoesNotExist:
             return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
 
@@ -196,19 +191,18 @@ class UpdateUsuarioView(APIView):
 
 class DeleteUsuarioView(APIView):
 
-#    DELETE /api/users/<user_id>/
     permission_classes = [IsAuthenticated]
 
     def delete(self, request, user_id):
         try:
-            user = Usuario.objects.get(id=user_id, deleted_at__isnull=True)
+            user = Usuario.objects.get(id=user_id)
         except Usuario.DoesNotExist:
             return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
 
         if request.user_payload.get("user_id") != user.id:
             return Response({"error": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
 
-        user.soft_delete()
+        user.delete()
         return Response(
             {"message": "User deleted successfully."},
             status=status.HTTP_200_OK,

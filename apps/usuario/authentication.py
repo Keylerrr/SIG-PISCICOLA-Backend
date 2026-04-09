@@ -1,7 +1,7 @@
 import jwt
 from django.conf import settings
 from rest_framework.authentication import BaseAuthentication
-from rest_framework.exceptions import AuthenticationFailed  # ← was AuthenticationError
+from rest_framework.exceptions import AuthenticationFailed 
 
 
 class JWTAuthentication(BaseAuthentication):
@@ -18,9 +18,9 @@ class JWTAuthentication(BaseAuthentication):
                 algorithms=["HS256"],
             )
         except jwt.ExpiredSignatureError:
-            raise AuthenticationFailed("Token has expired.")  # ← was AuthenticationError
+            raise AuthenticationFailed("Token has expired.")
         except jwt.InvalidTokenError:
-            raise AuthenticationFailed("Invalid token.")      # ← was AuthenticationError
+            raise AuthenticationFailed("Invalid token.")
 
         request.user_payload = payload
         return (_AuthenticatedUser(payload), token)
