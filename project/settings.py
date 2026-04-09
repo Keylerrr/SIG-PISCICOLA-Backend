@@ -44,10 +44,11 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
         "NAME": "psicola",
-        "USER": "postgres",
-        "PASSWORD": "test123",
-        "HOST": "db",
+        "USER": "psicola_user",
+        "PASSWORD": "woHPZ3R4nuEHiqH5D3wwEKpHwd91hSCI",
+        "HOST": "dpg-d7bvbs0sfn5c73b1rvig-a.virginia-postgres.render.com",
         "PORT": "5432",
+
     }
 }
 
@@ -74,8 +75,6 @@ EMAIL_USE_TLS = True
 EMAIL_HOST_USER = "pawsy1225@gmail.com"
 EMAIL_HOST_PASSWORD = "snih gqwz fcyc qzkv"
 DEFAULT_FROM_EMAIL = "pawsy1225@gmail.com"
-
-FRONTEND_URL = "http://localhost:8000"
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
