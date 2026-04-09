@@ -1,0 +1,6 @@
+django>=5.0
+djangorestframework>=3.15
+djangorestframework-simplejwt>=5.3
+bcrypt>=4.1
+PyJWT>=2.8
+psycopg2-binary>=2.9

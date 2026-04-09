@@ -1,0 +1,19 @@
+services:
+  web:
+    build:
+      context: ../
+      dockerfile: docker/Dockerfile
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      DJANGO_SETTINGS_MODULE: configs.dev_settings
+    volumes:
+      - ../:/app
+    networks:
+      - psicola_network
+
+networks:
+  psicola_network:
+    external: true
+    name: psicola_network
