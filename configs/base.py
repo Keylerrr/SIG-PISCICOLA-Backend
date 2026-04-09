@@ -4,6 +4,7 @@ from datetime import timedelta
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 INSTALLED_APPS = [
+    "corsheaders",
     "django.contrib.contenttypes",
     "django.contrib.auth",
     "django.contrib.staticfiles",
@@ -12,6 +13,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.middleware.common.CommonMiddleware",
 ]
@@ -20,6 +22,8 @@ ROOT_URLCONF = "project.urls"
 WSGI_APPLICATION = "project.wsgi.application"
 
 STATIC_URL = "/static/"
+
+CORS_ALLOW_ALL_ORIGINS = True
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
