@@ -10,10 +10,3 @@ services:
       DJANGO_SETTINGS_MODULE: configs.dev_settings
     volumes:
       - ../:/app
-    networks:
-      - psicola_network
-
-networks:
-  psicola_network:
-    external: true
-    name: psicola_network

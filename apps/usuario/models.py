@@ -17,7 +17,6 @@ class Usuario(models.Model):
 
     class Meta:
         db_table = "usuario"
-        managed = False 
 
     def __str__(self):
         return f"{self.name} ({self.email})"
