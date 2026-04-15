@@ -3,6 +3,7 @@ from .models import Farm
 
 class CreateFarmSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=200)
+    manager_id = serializers.IntegerField(required=False) # Solo lo usa el admin
     nit = serializers.CharField(max_length=50, required=False, allow_blank=True)
     owner = serializers.CharField(max_length=200, required=False, allow_blank=True)
     department = serializers.CharField(max_length=100, required=False, allow_blank=True)

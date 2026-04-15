@@ -16,7 +16,8 @@ class Farm(models.Model):
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(default=timezone.now)
-    deleted_at = models.DateTimeField(blank=True, null=True)
+    manager = models.ForeignKey("user.Manager", on_delete=models.SET_NULL, null=True, blank=True, related_name="farms")
+    # deleted_at = models.DateTimeField(blank=True, null=True)
 
     class Meta:
         db_table = "farm"
@@ -24,6 +25,6 @@ class Farm(models.Model):
     def __str__(self):
         return self.name
 
-    def soft_delete(self):
-        self.deleted_at = timezone.now()
-        self.save(update_fields=["deleted_at"])
+    # def soft_delete(self):
+    #     self.deleted_at = timezone.now()
+    #     self.save(update_fields=["deleted_at"])

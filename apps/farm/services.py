@@ -2,9 +2,10 @@
 from django.utils import timezone
 from .models import Farm
 
-def create_farm(data: dict) -> Farm:
+def create_farm(data: dict, manager=None ) -> Farm:
     return Farm.objects.create(
         name=data['name'],
+        manager = manager,
         nit=data.get('nit'),
         owner=data.get('owner'),
         department=data.get('department'),
