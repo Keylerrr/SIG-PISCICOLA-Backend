@@ -1,15 +1,22 @@
+import os
 from pathlib import Path
-from datetime import timedelta
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+SECRET_KEY = os.getenv("SECRET_KEY")
+DEBUG = os.getenv("DEBUG", "False") == "True"
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "").split(",")
 
 INSTALLED_APPS = [
     "corsheaders",
     "django.contrib.contenttypes",
-    "django.contrib.auth",
     "django.contrib.staticfiles",
     "rest_framework",
-    "apps.usuario",
+    "apps.user",
 ]
 
 MIDDLEWARE = [
@@ -20,28 +27,23 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = "project.urls"
 WSGI_APPLICATION = "project.wsgi.application"
-
 STATIC_URL = "/static/"
 
-CORS_ALLOW_ALL_ORIGINS = True
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [
-        "apps.usuario.authentication.JWTAuthentication",
+        "apps.user.authentication.JWTAuthentication",
     ],
     "DEFAULT_PERMISSION_CLASSES": [
-        "rest_framework.permissions.IsAuthenticated",
+        "rest_framework.permissions.AllowAny",
     ],
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
     ],
+    "UNAUTHENTICATED_USER": None,
 }
 
-SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(hours=1),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
-    "ALGORITHM": "HS256",
-}
+JWT_ACCESS_TOKEN_LIFETIME_HOURS = int(os.getenv("JWT_LIFETIME_HOURS", 24))
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
@@ -49,4 +51,3 @@ USE_I18N = True
 USE_TZ = True
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
-
