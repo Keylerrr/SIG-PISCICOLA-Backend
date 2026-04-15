@@ -17,6 +17,9 @@ class User(models.Model):
     role = models.CharField(max_length=20, choices=Role.choices)
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(default=timezone.now)
+    password_reset_token = models.TextField(null=True)
+    password_reset_expiry = models.DateTimeField(null=True,blank=True)
+
 
     class Meta:
         db_table = "user"
