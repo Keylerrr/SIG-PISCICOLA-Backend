@@ -10,13 +10,13 @@ tokenWorker="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjo0LCJlbWFpbCI6Im
 #  -H "Authorization: Bearer $tokenWorker" \
 #  -d '{"current_password": "zg9o1im1LiJv", "new_password": "nueva456"}'
 
-  curl -X POST http://localhost:8000/auth/reset-password/ \
-  -H "Content-Type: application/json" \
-  -d '{"email": "rogersantiagomh@ufps.edu.co"}'
+#  curl -X POST http://localhost:8000/auth/reset-password/ \
+#  -H "Content-Type: application/json" \
+#  -d '{"email": "rogersantiagomh@ufps.edu.co"}'
 
 #curl -X POST http://localhost:8000/auth/reset-password/confirm/ \
 #  -H "Content-Type: application/json" \
-#  -d '{"token": "uuid-del-correo", "new_password": "nueva456"}'
+#  -d '{"token": "359d7162-7393-4384-87a4-081eda9b25a2", "new_password": "nueva456"}'
 #
 # Workers filtrados por manager (con token de manager)
 # curl -X GET http://localhost:8000/workers/ \
@@ -37,9 +37,7 @@ tokenWorker="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjo0LCJlbWFpbCI6Im
 #curl -X POST http://localhost:8000/managers/ \
 #  -H "Content-Type: application/json" \
 #  -H "Authorization: Bearer $token" \
-#  -d '{"name": "Roger", "lastname": "Miranda", "email": "rogersantiagomh@ufps.edu.co", "phone": "123456789"}'
-
-#curl -X GET http://localhost:8000/managers/ \
+#  -d '{"name": "Roger", "lastname": "Miranda", "email": "rogersantiagomh@ufps.edu.co", "phone": "123456789"}' #curl -X GET http://localhost:8000/managers/ \
 #  -H "Authorization: Bearer $tokenAdmin"
 
 #curl -X DELETE http://localhost:8000/managers/2/ \

@@ -310,7 +310,6 @@ class RequestPasswordResetView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         services.request_password_reset(serializer.validated_data["email"])
-        # Siempre responde igual por seguridad
         return Response(
             {"message": "Si el correo existe, recibirás las instrucciones."}
         )
