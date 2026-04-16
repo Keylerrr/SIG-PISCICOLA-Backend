@@ -28,3 +28,6 @@ def update_farm(farm, data: dict):
     farm.updated_at = timezone.now()
     farm.save()
     return farm
+
+def delete_farm(farm):
+    farm.delete()
