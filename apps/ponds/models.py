@@ -1,0 +1,40 @@
+from django.db import models
+from django.utils import timezone
+from django.core.validators import MinValueValidator
+from apps.farm.models import Farm
+
+
+class Pond(models.Model):
+    TYPE_CHOICES = [
+        ('pond', 'Pond'),
+        ('cage', 'Cage'),
+    ]
+
+    STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('in_use', 'In Use'),
+        ('cleaning', 'Cleaning'),
+        ('inactive', 'Inactive'),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    farm = models.ForeignKey(Farm, on_delete=models.CASCADE, related_name="ponds")
+    code = models.CharField(max_length=50)
+    name = models.CharField(max_length=100)
+    type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='pond')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
+    capacity = models.IntegerField(validators=[MinValueValidator(1)])
+    description = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = "pond"
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(fields=['farm', 'code'], name='unique_code_per_farm')
+        ]
+
+    def __str__(self):
+        return f"{self.code} - {self.name} (Farm: {self.farm.name})"

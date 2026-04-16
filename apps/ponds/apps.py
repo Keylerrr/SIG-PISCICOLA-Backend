@@ -1,6 +1,6 @@
 from django.apps import AppConfig
 
 
-class EstanquesConfig(AppConfig):
+class PodsConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
-    name = 'apps.estanques'
+    name = 'apps.ponds'
