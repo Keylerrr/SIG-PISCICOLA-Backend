@@ -13,15 +13,18 @@ EMAIL_HOST_USER = "pawsy1225@gmail.com"
 EMAIL_HOST_PASSWORD = "snih gqwz fcyc qzkv"
 DEFAULT_FROM_EMAIL = "pawsy1225@gmail.com"
 
+CORS_ALLOW_ALL_ORIGINS = True
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": "psicola",
-        "USER": "psicola_user",
-        "PASSWORD": "woHPZ3R4nuEHiqH5D3wwEKpHwd91hSCI",
-        "HOST": "dpg-d7bvbs0sfn5c73b1rvig-a.virginia-postgres.render.com",
+        "NAME": "piscicola",
+        "USER": "piscicola_user",
+        "PASSWORD": "STtIkSjHtk1gV0GEYomHQ27mNRV5mvA3",
+        "HOST": "dpg-d7eq1c3bc2fs738ckjlg-a.virginia-postgres.render.com",
         "PORT": "5432",
+        "OPTIONS": {
+            "sslmode": "require",
+        },
     }
 }
-
-
