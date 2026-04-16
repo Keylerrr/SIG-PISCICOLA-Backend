@@ -10,7 +10,20 @@ from .serializers import CreateFarmSerializer, FarmResponseSerializer
 
 class FarmListCreateView(APIView):
     permission_classes = [IsAdminOrManager]  
+
     
+    def get(self, request):
+        role = request.user_payload.get("role")
+        user_id = request.user_payload.get("user_id")
+
+        if role == 'admin':
+            farms = services.get_all_farms()
+        else:
+            manager = Manager.objects.get(user__id=user_id)
+            farms = services.get_farms_by_manager(manager)
+
+        return Response(FarmResponseSerializer(farms, many=True).data)
+
     def post(self, request):
         serializer = CreateFarmSerializer(data=request.data)
         if not serializer.is_valid():

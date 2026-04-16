@@ -15,3 +15,9 @@ def create_farm(data: dict, manager=None ) -> Farm:
         total_area_ha=data.get('total_area_ha'),
         description=data.get('description'),
     )
+
+def get_all_farms():
+    return Farm.objects.select_related('manager', 'manager__user').all()
+
+def get_farms_by_manager(manager):
+    return Farm.objects.filter(manager=manager)
