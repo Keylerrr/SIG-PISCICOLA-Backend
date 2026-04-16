@@ -68,6 +68,21 @@ class FarmDetailView(APIView):
         except Farm.DoesNotExist:
             return None
 
+    
+    def get(self, request, farm_id):
+        farm = self._get_farm(farm_id)
+        if not farm:
+            return Response({"error": "Granja no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+        role = request.user_payload.get("role")
+        user_id = request.user_payload.get("user_id")
+        if role == 'manager':
+            user = User.objects.get(id=user_id)
+            manager = Manager.objects.get(user=user)
+            if farm.manager != manager:
+                return Response({"error": "No tienes acceso a esta granja."}, status=status.HTTP_403_FORBIDDEN)
+        return Response(FarmResponseSerializer(farm).data)
+    
+
     def patch(self, request, farm_id):
         farm = self._get_farm(farm_id)
         if not farm:
