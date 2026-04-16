@@ -21,3 +21,10 @@ def get_all_farms():
 
 def get_farms_by_manager(manager):
     return Farm.objects.filter(manager=manager)
+
+def update_farm(farm, data: dict):
+    for field, value in data.items():
+        setattr(farm, field, value)
+    farm.updated_at = timezone.now()
+    farm.save()
+    return farm

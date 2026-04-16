@@ -3,7 +3,7 @@ from .base import *
 SECRET_KEY = "django-insecure-dev"
 DEBUG = True
 ALLOWED_HOSTS = ["*"]
-BACKEND_URL = "https://backend-pongase-trucha.onrender.com"
+FRONTEND_URL = "https://backend-pongase-trucha.onrender.com"
 
 EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST = "smtp.gmail.com"
