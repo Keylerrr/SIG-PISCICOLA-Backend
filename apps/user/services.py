@@ -66,7 +66,7 @@ def request_password_reset(email: str) -> None:
     user.password_reset_expiry = timezone.now() + timedelta(hours=2)
     user.save(update_fields=["password_reset_token", "password_reset_expiry"])
 
-    reset_url = f"{settings.FRONTEND_URL}/auth/reset-password/{token}"
+    reset_url = f"{settings.BACKEND_URL}/resetPassword?uuid={token}"
     send_mail(
         subject="Restablecer tu contraseña",
         message=(
@@ -173,7 +173,7 @@ def _send_credentials_email(user: User, temp_password: str, role: str) -> None:
             f"  Email:      {user.email}\n"
             f"  Contraseña: {temp_password}\n\n"
             f"Por seguridad, te recomendamos cambiar tu contraseña al ingresar.\n\n"
-            f"Ingresa en: {settings.FRONTEND_URL}/auth/login"
+            f"Ingresa en: {settings.BACKEND_URL}"
         ),
         from_email=settings.DEFAULT_FROM_EMAIL,
         recipient_list=[user.email],

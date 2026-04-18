@@ -4,8 +4,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
-
 BASE_DIR = Path(__file__).resolve().parent.parent
+SECRET_KEY = os.getenv("SECRET_KEY")
+DEBUG = os.getenv("DEBUG", "False") == "True"
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 DEBUG = os.getenv("DEBUG", "False") == "True"
@@ -17,7 +18,6 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "rest_framework",
     "apps.user",
-    "apps.farm",
 ]
 
 MIDDLEWARE = [
@@ -29,7 +29,6 @@ MIDDLEWARE = [
 ROOT_URLCONF = "project.urls"
 WSGI_APPLICATION = "project.wsgi.application"
 STATIC_URL = "/static/"
-
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": [

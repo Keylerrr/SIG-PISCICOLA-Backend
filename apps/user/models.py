@@ -18,8 +18,7 @@ class User(models.Model):
     created_at = models.DateTimeField(default=timezone.now)
     updated_at = models.DateTimeField(default=timezone.now)
     password_reset_token = models.TextField(null=True)
-    password_reset_expiry = models.DateTimeField(null=True,blank=True)
-
+    password_reset_expiry = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "user"
