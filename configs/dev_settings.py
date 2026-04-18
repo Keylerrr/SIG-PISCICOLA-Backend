@@ -14,6 +14,8 @@ EMAIL_HOST_USER = "pawsy1225@gmail.com"
 EMAIL_HOST_PASSWORD = "snih gqwz fcyc qzkv"
 DEFAULT_FROM_EMAIL = "pawsy1225@gmail.com"
 
+CORS_ALLOW_ALL_ORIGINS = True
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",

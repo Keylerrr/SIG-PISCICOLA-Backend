@@ -8,6 +8,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv("SECRET_KEY")
 DEBUG = os.getenv("DEBUG", "False") == "True"
 
+SECRET_KEY = os.getenv("SECRET_KEY")
+DEBUG = os.getenv("DEBUG", "False") == "True"
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "").split(",")
+
 INSTALLED_APPS = [
     "corsheaders",
     "django.contrib.contenttypes",
@@ -24,7 +28,6 @@ MIDDLEWARE = [
 
 ROOT_URLCONF = "project.urls"
 WSGI_APPLICATION = "project.wsgi.application"
-
 STATIC_URL = "/static/"
 
 REST_FRAMEWORK = {
