@@ -1,8 +1,10 @@
 import uuid
+
 from django.db import models
 from django.utils import timezone
 
-class Usuario(models.Model):
+
+class User(models.Model):
     id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=100)
     lastname = models.CharField(max_length=100, blank=True, null=True)
@@ -15,7 +17,7 @@ class Usuario(models.Model):
     updated_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
-        db_table = "usuario"
+        db_table = "user"
 
     def __str__(self):
         return f"{self.name} ({self.email})"

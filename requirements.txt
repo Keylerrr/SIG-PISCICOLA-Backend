@@ -5,3 +5,5 @@ bcrypt>=4.1
 PyJWT>=2.8
 psycopg2-binary>=2.9
 django-cors-headers>=4.3
+python-dotenv
+gunicorn
