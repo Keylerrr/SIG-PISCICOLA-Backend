@@ -6,13 +6,12 @@ from apps.user.permissions import IsAdminOrManager
 from apps.user.models import Manager, User
 from . import services
 from .serializers import CreateFarmSerializer, FarmResponseSerializer, UpdateFarmSerializer
-from .models import Farm
+from .models import Farm, DEPARTMENT_CITY_MAP, DEPARTMENT_LABELS
 
 
 class FarmListCreateView(APIView):
-    permission_classes = [IsAdminOrManager]  
+    permission_classes = [IsAdminOrManager]
 
-    
     def get(self, request):
         role = request.user_payload.get("role")
         user_id = request.user_payload.get("user_id")
@@ -35,11 +34,9 @@ class FarmListCreateView(APIView):
         user_id = request.user_payload.get("user_id")
 
         if role == 'manager':
-            # El manager crea la granja para sí mismo
             user = User.objects.get(id=user_id)
             manager = Manager.objects.get(user=user)
         elif role == 'admin':
-            # El admin debe especificar el manager_id
             manager_id = serializer.validated_data.get('manager_id')
             if not manager_id:
                 return Response(
@@ -59,6 +56,7 @@ class FarmListCreateView(APIView):
             status=status.HTTP_201_CREATED,
         )
 
+
 class FarmDetailView(APIView):
     permission_classes = [IsAdminOrManager]
 
@@ -68,7 +66,6 @@ class FarmDetailView(APIView):
         except Farm.DoesNotExist:
             return None
 
-    
     def get(self, request, farm_id):
         farm = self._get_farm(farm_id)
         if not farm:
@@ -81,7 +78,6 @@ class FarmDetailView(APIView):
             if farm.manager != manager:
                 return Response({"error": "No tienes acceso a esta granja."}, status=status.HTTP_403_FORBIDDEN)
         return Response(FarmResponseSerializer(farm).data)
-    
 
     def patch(self, request, farm_id):
         farm = self._get_farm(farm_id)
@@ -120,3 +116,23 @@ class FarmDetailView(APIView):
 
         services.delete_farm(farm)
         return Response({"message": "Granja eliminada."}, status=status.HTTP_200_OK)
+
+class DepartmentListView(APIView):
+    permission_classes = [IsAdminOrManager]
+
+    def get(self, request):
+        departments = [
+            {"key": key, "label": label}
+            for key, label in DEPARTMENT_LABELS.items()
+        ]
+        return Response({"departments": departments})
+
+class CityListView(APIView):
+    permission_classes = [IsAdminOrManager]
+
+    def get(self, request, department):
+        cities = DEPARTMENT_CITY_MAP.get(department)
+        if cities is None:
+            return Response({"error": "Departamento no válido."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"department": DEPARTMENT_LABELS[department], "cities": cities})
+
