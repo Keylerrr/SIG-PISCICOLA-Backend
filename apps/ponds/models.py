@@ -5,11 +5,6 @@ from apps.farm.models import Farm
 
 
 class Pond(models.Model):
-    TYPE_CHOICES = [
-        ('pond', 'Pond'),
-        ('cage', 'Cage'),
-    ]
-
     STATUS_CHOICES = [
         ('active', 'Active'),
         ('in_use', 'In Use'),
@@ -21,9 +16,11 @@ class Pond(models.Model):
     farm = models.ForeignKey(Farm, on_delete=models.CASCADE, related_name="ponds")
     code = models.CharField(max_length=50)
     name = models.CharField(max_length=100)
-    type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='pond')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
     capacity = models.IntegerField(validators=[MinValueValidator(1)])
+    area = models.FloatField(validators=[MinValueValidator(0.01)], help_text="Area in m²")
+    volume = models.FloatField(validators=[MinValueValidator(0.01)], help_text="Volume in m³")
+    depth = models.FloatField(validators=[MinValueValidator(0.01)], help_text="Depth in m")
     description = models.TextField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(default=timezone.now)

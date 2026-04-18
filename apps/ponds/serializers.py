@@ -5,9 +5,8 @@ from .models import Pond
 class PondSerializer(serializers.ModelSerializer):
     class Meta:
         model = Pond
-        fields = ['farm', 'code', 'name', 'type', 'status', 'capacity', 'description']
+        fields = ['farm', 'code', 'name', 'status', 'capacity', 'area', 'volume', 'depth', 'description']
         extra_kwargs = {
-            'type': {'required': False},
             'status': {'required': False},
             'description': {'required': False},
         }
@@ -27,12 +26,14 @@ class PondSerializer(serializers.ModelSerializer):
 class PondUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Pond
-        fields = ['name', 'type', 'status', 'capacity', 'description', 'is_active']
+        fields = ['name', 'status', 'capacity', 'area', 'volume', 'depth', 'description', 'is_active']
         extra_kwargs = {
             'name': {'required': False},
-            'type': {'required': False},
             'status': {'required': False},
             'capacity': {'required': False},
+            'area': {'required': False},
+            'volume': {'required': False},
+            'depth': {'required': False},
             'description': {'required': False},
             'is_active': {'required': False},
         }
@@ -50,7 +51,7 @@ class PondResponseSerializer(serializers.ModelSerializer):
         model = Pond
         fields = [
             'id', 'farm', 'farm_name', 'code', 'name',
-            'type', 'status', 'capacity', 'description', 'is_active',
+            'status', 'capacity', 'area', 'volume', 'depth', 'description', 'is_active',
             'created_at', 'updated_at'
         ]
 
