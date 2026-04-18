@@ -117,15 +117,22 @@ class FarmDetailView(APIView):
         services.delete_farm(farm)
         return Response({"message": "Granja eliminada."}, status=status.HTTP_200_OK)
 
+class DepartmentListView(APIView):
+    permission_classes = [IsAdminOrManager]
+
+    def get(self, request):
+        departments = [
+            {"key": key, "label": label}
+            for key, label in DEPARTMENT_LABELS.items()
+        ]
+        return Response({"departments": departments})
 
 class CityListView(APIView):
     permission_classes = [IsAdminOrManager]
 
-    def get(self, request):
-        department = request.query_params.get('department')
-        if not department:
-            return Response({"error": "Debes enviar el parámetro 'department'."}, status=status.HTTP_400_BAD_REQUEST)
+    def get(self, request, department):
         cities = DEPARTMENT_CITY_MAP.get(department)
         if cities is None:
             return Response({"error": "Departamento no válido."}, status=status.HTTP_400_BAD_REQUEST)
         return Response({"department": DEPARTMENT_LABELS[department], "cities": cities})
+
