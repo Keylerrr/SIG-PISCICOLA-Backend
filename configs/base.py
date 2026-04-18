@@ -4,7 +4,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
-
 BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv("SECRET_KEY")
 DEBUG = os.getenv("DEBUG", "False") == "True"
@@ -12,7 +11,6 @@ DEBUG = os.getenv("DEBUG", "False") == "True"
 INSTALLED_APPS = [
     "corsheaders",
     "django.contrib.contenttypes",
-    "django.contrib.auth",
     "django.contrib.staticfiles",
     "rest_framework",
     "apps.user",
@@ -39,6 +37,7 @@ REST_FRAMEWORK = {
     "DEFAULT_RENDERER_CLASSES": [
         "rest_framework.renderers.JSONRenderer",
     ],
+    "UNAUTHENTICATED_USER": None,
 }
 
 JWT_ACCESS_TOKEN_LIFETIME_HOURS = int(os.getenv("JWT_LIFETIME_HOURS", 24))
