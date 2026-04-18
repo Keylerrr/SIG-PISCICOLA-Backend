@@ -1,127 +1,36 @@
-import uuid
-import bcrypt
-from datetime import timedelta, timezone as dt_timezone 
-
-from django.utils import timezone
-from django.core.mail import send_mail
+import jwt
 from django.conf import settings
-
+from django.utils import timezone
 from rest_framework import status
-from rest_framework.views import APIView
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, AllowAny
-from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework.views import APIView
 
-from .models import Usuario
-from .serializers import (
-    RegisterSerializer,
-    LoginSerializer,
-    UpdateUsuarioSerializer,
-    UsuarioResponseSerializer,
-)
+from . import services
+from .models import Manager, User, Worker
+from .permissions import IsAdmin, IsAdminOrManager, IsAuthenticated
+from .serializers import (ChangePasswordSerializer,
+                          ConfirmPasswordResetSerializer,
+                          CreateManagerSerializer, CreateWorkerSerializer,
+                          LoginSerializer, RequestPasswordResetSerializer,
+                          UpdateUserSerializer, UserResponseSerializer,
+                          WorkerResponseSerializer)
 
 
-def get_tokens_for_user(user: Usuario) -> dict:
-    refresh = RefreshToken()
-    refresh["user_id"] = user.id
-    refresh["email"] = user.email
-    return {
-        "refresh": str(refresh),
-        "access": str(refresh.access_token),
+def _get_tokens_for_user(user: User) -> dict:
+    import time
+
+    payload = {
+        "user_id": user.id,
+        "email": user.email,
+        "role": user.role,
+        "exp": int(time.time()) + 60 * 60 * 24,  # 24h
     }
+    token = jwt.encode(payload, settings.SECRET_KEY, algorithm="HS256")
+    return {"access": token}
 
-
-class RegisterView(APIView):
-   
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        serializer = RegisterSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
-        data = serializer.validated_data
-
-        password_hash = bcrypt.hashpw(
-            data["password"].encode("utf-8"), bcrypt.gensalt()
-        ).decode("utf-8")
-
-        verification_token = str(uuid.uuid4())
-        token_expiry = timezone.now() + timedelta(hours=24)
-
-        user = Usuario.objects.create(
-            name=data["name"],
-            lastname=data.get("lastname"),
-            email=data["email"],
-            password_hash=password_hash,
-            phone=data.get("phone"),
-            token_reset=verification_token,
-            token_reset_expiry=token_expiry,
-            created_at=timezone.now(),
-            updated_at=timezone.now(),
-        )
-
-        verify_url = f"{settings.FRONTEND_URL}/api/auth/verify/{verification_token}/"
-        send_mail(
-            subject="Verify your email address",
-            message=(
-                f"Hi {user.name},\n\n"
-                f"Please verify your email by clicking the link below:\n{verify_url}\n\n"
-                f"This link expires in 24 hours."
-            ),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            fail_silently=False,
-        )
-
-        return Response(
-            {
-                "message": "Registration successful. Please check your email to verify your account.",
-                "user": UsuarioResponseSerializer(user).data,
-            },
-            status=status.HTTP_201_CREATED,
-        )
-
-
-class VerifyEmailView(APIView):
-
-
-    permission_classes = [AllowAny]
-
-    def get(self, request, token):
-        try:
-            user = Usuario.objects.get(
-                token_reset=token,
-            )
-        except Usuario.DoesNotExist:
-            return Response(
-                {"error": "Invalid or expired verification token."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if user.token_reset_expiry and user.token_reset_expiry.replace(tzinfo=dt_timezone.utc) < timezone.now():
-            return Response(
-                {"error": "Verification token has expired. Please register again."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        user.token_reset = None
-        user.token_reset_expiry = None
-        user.updated_at = timezone.now()
-        user.save(update_fields=["token_reset", "token_reset_expiry", "updated_at"])
-
-        tokens = get_tokens_for_user(user)
-        return Response(
-            {
-                "message": "Email verified successfully.",
-                "user": UsuarioResponseSerializer(user).data,
-                "tokens": tokens,
-            },
-            status=status.HTTP_200_OK,
-        )
 
 class LoginView(APIView):
-
     permission_classes = [AllowAny]
 
     def post(self, request):
@@ -129,82 +38,297 @@ class LoginView(APIView):
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        email = serializer.validated_data["email"]
-        password = serializer.validated_data["password"]
-
         try:
-            user = Usuario.objects.get(email=email)
-        except Usuario.DoesNotExist:
-            return Response(
-                {"error": "Invalid credentials."},
-                status=status.HTTP_401_UNAUTHORIZED,
+            user = services.login_user(
+                email=serializer.validated_data["email"],
+                password=serializer.validated_data["password"],
             )
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_401_UNAUTHORIZED)
+        except PermissionError as e:
+            return Response({"error": str(e)}, status=status.HTTP_403_FORBIDDEN)
 
-        if user.token_reset is not None:
-            return Response(
-                {"error": "Please verify your email before logging in."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        if not bcrypt.checkpw(password.encode("utf-8"), user.password_hash.encode("utf-8")):
-            return Response(
-                {"error": "Invalid credentials."},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-
-        tokens = get_tokens_for_user(user)
         return Response(
             {
-                "message": "Login successful.",
-                "user": UsuarioResponseSerializer(user).data,
-                "tokens": tokens,
+                "message": "Login exitoso.",
+                "user": UserResponseSerializer(user).data,
+                "tokens": _get_tokens_for_user(user),
             },
             status=status.HTTP_200_OK,
         )
 
 
-class UpdateUsuarioView(APIView):
-    permission_classes = [IsAuthenticated]
+class ManagerListCreateView(APIView):
+    permission_classes = [IsAdmin]
 
-    def patch(self, request, user_id):
-        try:
-            user = Usuario.objects.get(id=user_id)
-        except Usuario.DoesNotExist:
-            return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+    def get(self, request):
+        managers = User.objects.filter(role=User.Role.MANAGER)
+        return Response(UserResponseSerializer(managers, many=True).data)
 
-        if request.user_payload.get("user_id") != user.id:
-            return Response({"error": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
-
-        serializer = UpdateUsuarioSerializer(user, data=request.data, partial=True)
+    def post(self, request):
+        serializer = CreateManagerSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        serializer.save(updated_at=timezone.now())
+        user = services.create_manager(serializer.validated_data)
         return Response(
             {
-                "message": "User updated successfully.",
-                "user": UsuarioResponseSerializer(user).data,
+                "message": "Manager creado. Se enviaron las credenciales por correo.",
+                "user": UserResponseSerializer(user).data,
             },
-            status=status.HTTP_200_OK,
+            status=status.HTTP_201_CREATED,
         )
 
 
-class DeleteUsuarioView(APIView):
+class ManagerDetailView(APIView):
+    permission_classes = [IsAdmin]
 
-    permission_classes = [IsAuthenticated]
+    def _get_manager(self, user_id):
+        try:
+            return Manager.objects.select_related("user").get(user__id=user_id)
+        except Manager.DoesNotExist:
+            return None
+
+    def get(self, request, user_id):
+        manager = self._get_manager(user_id)
+        if not manager:
+            return Response(
+                {"error": "Manager no encontrado."}, status=status.HTTP_404_NOT_FOUND
+            )
+        return Response(UserResponseSerializer(manager.user).data)
+
+    def patch(self, request, user_id):
+        manager = self._get_manager(user_id)
+        if not manager:
+            return Response(
+                {"error": "Manager no encontrado."}, status=status.HTTP_404_NOT_FOUND
+            )
+        serializer = UpdateUserSerializer(manager.user, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        user = services.update_user(manager.user, serializer.validated_data)
+        return Response(
+            {
+                "message": "Manager actualizado.",
+                "user": UserResponseSerializer(user).data,
+            }
+        )
 
     def delete(self, request, user_id):
         try:
-            user = Usuario.objects.get(id=user_id)
-        except Usuario.DoesNotExist:
-            return Response({"error": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+            services.delete_user(user_id, role=User.Role.MANAGER)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"message": "Manager eliminado."})
 
-        if request.user_payload.get("user_id") != user.id:
-            return Response({"error": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
 
-        user.delete()
+class WorkerListCreateView(APIView):
+    permission_classes = [IsAdminOrManager]
+
+    def get(self, request):
+        role = request.user_payload.get("role")
+        user_id = request.user_payload.get("user_id")
+
+        if role == "admin":
+            workers = services.get_all_workers()
+        else:
+            try:
+                manager = Manager.objects.get(user__id=user_id)
+            except Manager.DoesNotExist:
+                return Response(
+                    {"error": "Manager no encontrado."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            workers = services.get_workers_by_manager(manager)
+
+        return Response(WorkerResponseSerializer(workers, many=True).data)
+
+    def post(self, request):
+        serializer = CreateWorkerSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        role = request.user_payload.get("role")
+        user_id = request.user_payload.get("user_id")
+
+        manager = None
+        if role == "manager":
+            try:
+                manager = Manager.objects.get(user__id=user_id)
+            except Manager.DoesNotExist:
+                return Response(
+                    {"error": "Manager no encontrado."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+        user = services.create_worker(
+            serializer.validated_data, created_by_manager=manager
+        )
         return Response(
-            {"message": "User deleted successfully."},
-            status=status.HTTP_200_OK,
+            {
+                "message": "Worker creado. Credenciales enviadas por correo.",
+                "user": UserResponseSerializer(user).data,
+            },
+            status=status.HTTP_201_CREATED,
         )
 
+
+class WorkerDetailView(APIView):
+    permission_classes = [IsAdminOrManager]
+
+    def _get_worker_and_check_access(self, request, worker_user_id):
+        try:
+            worker = Worker.objects.select_related("user", "manager__user").get(
+                user__id=worker_user_id
+            )
+        except Worker.DoesNotExist:
+            return None, Response(
+                {"error": "Worker no encontrado."}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        role = request.user_payload.get("role")
+        if role == "manager":
+            manager_user_id = request.user_payload.get("user_id")
+            if not worker.manager or worker.manager.user.id != manager_user_id:
+                return None, Response(
+                    {"error": "No tienes acceso a este worker."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
+        return worker, None
+
+    def get(self, request, user_id):
+        worker, error = self._get_worker_and_check_access(request, user_id)
+        if error:
+            return error
+        return Response(WorkerResponseSerializer(worker).data)
+
+    def patch(self, request, user_id):
+        worker, error = self._get_worker_and_check_access(request, user_id)
+        if error:
+            return error
+        serializer = UpdateUserSerializer(worker.user, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        user = services.update_user(worker.user, serializer.validated_data)
+        return Response(
+            {
+                "message": "Worker actualizado.",
+                "user": UserResponseSerializer(user).data,
+            }
+        )
+
+    def delete(self, request, user_id):
+        worker, error = self._get_worker_and_check_access(request, user_id)
+        if error:
+            return error
+        try:
+            services.delete_user(user_id, role=User.Role.WORKER)
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"message": "Worker eliminado."})
+
+
+class MeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def _get_user(self, request):
+        user_id = request.user_payload.get("user_id")
+        try:
+            return User.objects.get(id=user_id), None
+        except User.DoesNotExist:
+            return None, Response(
+                {"error": "Usuario no encontrado."}, status=status.HTTP_404_NOT_FOUND
+            )
+
+    def get(self, request):
+        user, error = self._get_user(request)
+        if error:
+            return error
+        return Response(UserResponseSerializer(user).data)
+
+    def patch(self, request):
+        user, error = self._get_user(request)
+        if error:
+            return error
+        serializer = UpdateUserSerializer(user, data=request.data, partial=True)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        user = services.update_user(user, serializer.validated_data)
+        return Response(
+            {
+                "message": "Perfil actualizado.",
+                "user": UserResponseSerializer(user).data,
+            }
+        )
+
+
+class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        token = request.token
+        exp = request.user_payload.get("exp")
+        services.logout_user(token=token, exp_timestamp=exp)
+        return Response({"message": "Sesión cerrada correctamente."})
+
+
+class ChangePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChangePasswordSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        user_id = request.user_payload.get("user_id")
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {"error": "Usuario no encontrado."}, status=status.HTTP_404_NOT_FOUND
+            )
+
+        try:
+            services.change_password(
+                user=user,
+                current_password=serializer.validated_data["current_password"],
+                new_password=serializer.validated_data["new_password"],
+            )
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({"message": "Contraseña actualizada correctamente."})
+
+
+class RequestPasswordResetView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = RequestPasswordResetSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        services.request_password_reset(serializer.validated_data["email"])
+        return Response(
+            {"message": "Si el correo existe, recibirás las instrucciones."}
+        )
+
+
+class ConfirmPasswordResetView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ConfirmPasswordResetSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            services.confirm_password_reset(
+                token=serializer.validated_data["token"],
+                new_password=serializer.validated_data["new_password"],
+            )
+        except ValueError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({"message": "Contraseña restablecida correctamente."})
