@@ -26,7 +26,7 @@ class PondSerializer(serializers.ModelSerializer):
 class PondUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Pond
-        fields = ['name', 'status', 'capacity', 'area', 'volume', 'depth', 'description', 'is_active']
+        fields = ['name', 'status', 'capacity', 'area', 'volume', 'depth', 'description']
         extra_kwargs = {
             'name': {'required': False},
             'status': {'required': False},
@@ -35,7 +35,6 @@ class PondUpdateSerializer(serializers.ModelSerializer):
             'volume': {'required': False},
             'depth': {'required': False},
             'description': {'required': False},
-            'is_active': {'required': False},
         }
 
     def validate_capacity(self, value):
@@ -51,7 +50,7 @@ class PondResponseSerializer(serializers.ModelSerializer):
         model = Pond
         fields = [
             'id', 'farm', 'farm_name', 'code', 'name',
-            'status', 'capacity', 'area', 'volume', 'depth', 'description', 'is_active',
+            'status', 'capacity', 'area', 'volume', 'depth', 'description',
             'created_at', 'updated_at'
         ]
 
@@ -59,7 +58,7 @@ class PondResponseSerializer(serializers.ModelSerializer):
 class PondToggleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Pond
-        fields = ['is_active']
+        fields = ['status']
 
 
 class PondChangeStatusSerializer(serializers.Serializer):
