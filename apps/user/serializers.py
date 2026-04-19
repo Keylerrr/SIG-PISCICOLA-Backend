@@ -60,10 +60,58 @@ class UserResponseSerializer(serializers.ModelSerializer):
 
 
 class WorkerResponseSerializer(serializers.ModelSerializer):
-    user = UserResponseSerializer()
-    manager_id = serializers.IntegerField(source="manager.id", allow_null=True)
-    manager_name = serializers.CharField(source="manager.user.name", allow_null=True)
+    worker_id = serializers.IntegerField(source="id")
+    user_id = serializers.IntegerField(source="user.id")
+    name = serializers.CharField(source="user.name")
+    lastname = serializers.CharField(source="user.lastname")
+    email = serializers.EmailField(source="user.email")
+    phone = serializers.CharField(source="user.phone")
+    role = serializers.CharField(source="user.role")
+    created_at = serializers.DateTimeField(source="user.created_at")
+    manager_id = serializers.SerializerMethodField()
+    manager_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Worker
-        fields = ["id", "user", "manager_id", "manager_name"]
+        fields = [
+            "worker_id",
+            "user_id",
+            "name",
+            "lastname",
+            "email",
+            "phone",
+            "role",
+            "manager_id",
+            "manager_name",
+            "created_at",
+        ]
+
+    def get_manager_id(self, obj):
+        return obj.manager.id if obj.manager else None
+
+    def get_manager_name(self, obj):
+        return obj.manager.user.name if obj.manager else None
+
+
+class ManagerResponseSerializer(serializers.ModelSerializer):
+    manager_id = serializers.IntegerField(source="id")
+    user_id = serializers.IntegerField(source="user.id")
+    name = serializers.CharField(source="user.name")
+    lastname = serializers.CharField(source="user.lastname")
+    email = serializers.EmailField(source="user.email")
+    phone = serializers.CharField(source="user.phone")
+    role = serializers.CharField(source="user.role")
+    created_at = serializers.DateTimeField(source="user.created_at")
+
+    class Meta:
+        model = Manager
+        fields = [
+            "manager_id",
+            "user_id",
+            "name",
+            "lastname",
+            "email",
+            "phone",
+            "role",
+            "created_at",
+        ]
