@@ -114,9 +114,9 @@ def create_manager(data: dict) -> User:
         phone=data.get("phone"),
         role=User.Role.MANAGER,
     )
-    Manager.objects.create(user=user)
+    manager = Manager.objects.create(user=user)
     _send_credentials_email(user, temp_password, role="manager")
-    return user
+    return manager
 
 
 def create_worker(data: dict, created_by_manager: Manager | None = None) -> User:
@@ -129,9 +129,9 @@ def create_worker(data: dict, created_by_manager: Manager | None = None) -> User
         phone=data.get("phone"),
         role=User.Role.WORKER,
     )
-    Worker.objects.create(user=user, manager=created_by_manager)
+    worker = Worker.objects.create(user=user, manager=created_by_manager)
     _send_credentials_email(user, temp_password, role="worker")
-    return user
+    return worker
 
 
 def update_user(user: User, data: dict) -> User:
