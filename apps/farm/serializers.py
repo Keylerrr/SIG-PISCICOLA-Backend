@@ -21,6 +21,11 @@ class CreateFarmSerializer(serializers.Serializer):
                 })
         return data
 
+    def validate_total_area_ha(self, value):
+        if value <= 0:
+             raise serializers.ValidationError("El área total debe ser mayor a cero.")
+        return value    
+
 
 class FarmResponseSerializer(serializers.ModelSerializer):
     manager_id = serializers.IntegerField(source='manager.id', allow_null=True)
@@ -36,6 +41,7 @@ class FarmResponseSerializer(serializers.ModelSerializer):
 
 class UpdateFarmSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=200, required=False)
+    manager_id = serializers.IntegerField(required=False)
     department = serializers.ChoiceField(choices=DEPARTMENT_CHOICES, required=False, allow_null=True)
     city = serializers.ChoiceField(choices=CITY_CHOICES, required=False, allow_null=True)
     address = serializers.CharField(max_length=200, required=False, allow_blank=True)
@@ -51,3 +57,8 @@ class UpdateFarmSerializer(serializers.Serializer):
                     'city': 'La ciudad no pertenece al departamento seleccionado.'
                 })
         return data
+    
+    def validate_total_area_ha(self, value):
+        if value <= 0:
+             raise serializers.ValidationError("El área total debe ser mayor a cero.")
+        return value    
