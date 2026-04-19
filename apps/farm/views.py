@@ -92,12 +92,22 @@ class FarmDetailView(APIView):
             manager = Manager.objects.get(user=user)
             if farm.manager != manager:
                 return Response({"error": "No tienes acceso a esta granja."}, status=status.HTTP_403_FORBIDDEN)
+            if 'manager_id' in request.data:
+                return Response({"error": "No puedes cambiar el manager de una granja."}, status=status.HTTP_403_FORBIDDEN)
 
         serializer = UpdateFarmSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        farm = services.update_farm(farm, serializer.validated_data)
+        data = serializer.validated_data
+        if role == 'admin' and 'manager_id' in data:
+            manager_id = data.pop('manager_id')
+            try:
+                data['manager'] = Manager.objects.get(id=manager_id)
+            except Manager.DoesNotExist:
+                return Response({"error": "Manager no encontrado."}, status=status.HTTP_404_NOT_FOUND)
+
+        farm = services.update_farm(farm, data)
         return Response({"message": "Granja actualizada.", "farm": FarmResponseSerializer(farm).data})
 
     def delete(self, request, farm_id):
