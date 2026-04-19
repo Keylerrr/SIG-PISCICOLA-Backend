@@ -188,22 +188,22 @@ class ManagerListCreateView(APIView):
 class ManagerDetailView(APIView):
     permission_classes = [IsAdmin]
 
-    def _get_manager(self, user_id):
+    def _get_manager(self, manager_id):
         try:
-            return Manager.objects.select_related("user").get(user__id=user_id)
+            return Manager.objects.select_related("user").get(id=manager_id)
         except Manager.DoesNotExist:
             return None
 
-    def get(self, request, user_id):
-        manager = self._get_manager(user_id)
+    def get(self, request, manager_id):
+        manager = self._get_manager(manager_id)
         if not manager:
             return Response(
                 {"error": "Manager no encontrado."}, status=status.HTTP_404_NOT_FOUND
             )
         return Response(ManagerResponseSerializer(manager).data)
 
-    def patch(self, request, user_id):
-        manager = self._get_manager(user_id)
+    def patch(self, request, manager_id):
+        manager = self._get_manager(manager_id)
         if not manager:
             return Response(
                 {"error": "Manager no encontrado."}, status=status.HTTP_404_NOT_FOUND
@@ -214,7 +214,7 @@ class ManagerDetailView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         services.update_user(manager.user, serializer.validated_data)
-        manager.refresh_from_db()
+        manager.user.refresh_from_db()
         return Response(
             {
                 "message": "Manager actualizado.",
@@ -222,9 +222,14 @@ class ManagerDetailView(APIView):
             }
         )
 
-    def delete(self, request, user_id):
+    def delete(self, request, manager_id):
+        manager = self._get_manager(manager_id)
+        if not manager:
+            return Response(
+                {"error": "Manager no encontrado."}, status=status.HTTP_404_NOT_FOUND
+            )
         try:
-            services.delete_user(user_id, role=User.Role.MANAGER)
+            services.delete_user(manager.user.id, role=User.Role.MANAGER)
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
         return Response({"message": "Manager eliminado."})
@@ -284,10 +289,10 @@ class WorkerListCreateView(APIView):
 class WorkerDetailView(APIView):
     permission_classes = [IsAdminOrManager]
 
-    def _get_worker_and_check_access(self, request, worker_user_id):
+    def _get_worker_and_check_access(self, request, worker_id):
         try:
             worker = Worker.objects.select_related("user", "manager__user").get(
-                user__id=worker_user_id
+                id=worker_id  # ← lookup by Worker.id not user__id
             )
         except Worker.DoesNotExist:
             return None, Response(
@@ -305,23 +310,21 @@ class WorkerDetailView(APIView):
 
         return worker, None
 
-    def get(self, request, user_id):
-        worker, error = self._get_worker_and_check_access(request, user_id)
+    def get(self, request, worker_id):
+        worker, error = self._get_worker_and_check_access(request, worker_id)
         if error:
             return error
         return Response(WorkerResponseSerializer(worker).data)
 
-    def patch(self, request, user_id):
-        worker, error = self._get_worker_and_check_access(request, user_id)
+    def patch(self, request, worker_id):
+        worker, error = self._get_worker_and_check_access(request, worker_id)
         if error:
             return error
-
         serializer = UpdateUserSerializer(worker.user, data=request.data, partial=True)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
         services.update_user(worker.user, serializer.validated_data)
-        worker.refresh_from_db()
+        worker.user.refresh_from_db()
         return Response(
             {
                 "message": "Worker actualizado.",
@@ -329,12 +332,14 @@ class WorkerDetailView(APIView):
             }
         )
 
-    def delete(self, request, user_id):
-        worker, error = self._get_worker_and_check_access(request, user_id)
+    def delete(self, request, worker_id):
+        worker, error = self._get_worker_and_check_access(request, worker_id)
         if error:
             return error
         try:
-            services.delete_user(user_id, role=User.Role.WORKER)
+            services.delete_user(
+                worker.user.id, role=User.Role.WORKER
+            )  # ← worker.user.id
         except ValueError as e:
             return Response({"error": str(e)}, status=status.HTTP_404_NOT_FOUND)
         return Response({"message": "Worker eliminado."})

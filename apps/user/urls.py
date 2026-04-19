@@ -20,8 +20,10 @@ urlpatterns = [
         name="reset-password-confirm",
     ),
     path("managers/", ManagerListCreateView.as_view(), name="managers"),
-    path("managers/<int:user_id>/", ManagerDetailView.as_view(), name="manager-detail"),
+    path(
+        "managers/<int:manager_id>/", ManagerDetailView.as_view(), name="manager-detail"
+    ),
     path("workers/", WorkerListCreateView.as_view(), name="workers"),
-    path("workers/<int:user_id>/", WorkerDetailView.as_view(), name="worker-detail"),
+    path("workers/<int:worker_id>/", WorkerDetailView.as_view(), name="worker-detail"),
     path("users/me/", MeView.as_view(), name="me"),
 ]
