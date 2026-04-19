@@ -71,6 +71,7 @@ class PondListCreateView(APIView):
 
     def post(self, request):
         user_id = request.user_payload.get('user_id')
+        user_role = request.user_payload.get('role')
 
         farm_id = request.data.get('farm')
         if not farm_id:
@@ -79,7 +80,7 @@ class PondListCreateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if not self._user_owns_farm(user_id, farm_id):
+        if user_role != 'admin' and not self._user_owns_farm(user_id, farm_id):
             return Response(
                 {'error': 'You do not have permission to create ponds in this farm.'},
                 status=status.HTTP_403_FORBIDDEN,
