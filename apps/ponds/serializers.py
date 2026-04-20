@@ -7,15 +7,10 @@ class PondSerializer(serializers.ModelSerializer):
         model = Pond
         fields = ['farm', 'code', 'name', 'status', 'capacity', 'area', 'volume', 'depth', 'description']
         extra_kwargs = {
+            'code': {'required': False},
             'status': {'required': False},
             'description': {'required': False},
         }
-
-    def validate_code(self, value):
-        farm = self.initial_data.get('farm')
-        if farm and Pond.objects.filter(farm=farm, code=value).exists():
-            raise serializers.ValidationError("A pond with this code already exists in the farm.")
-        return value
 
     def validate_capacity(self, value):
         if value <= 0:

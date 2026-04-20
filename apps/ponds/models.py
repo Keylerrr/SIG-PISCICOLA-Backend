@@ -14,7 +14,7 @@ class Pond(models.Model):
 
     id = models.AutoField(primary_key=True)
     farm = models.ForeignKey(Farm, on_delete=models.CASCADE, related_name="ponds")
-    code = models.CharField(max_length=50)
+    code = models.CharField(max_length=50, blank=True, null=True)
     name = models.CharField(max_length=100)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='active')
     capacity = models.IntegerField(validators=[MinValueValidator(1)], default=1)

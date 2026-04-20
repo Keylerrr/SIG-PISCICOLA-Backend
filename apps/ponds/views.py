@@ -93,7 +93,6 @@ class PondListCreateView(APIView):
 
         pond = Pond.objects.create(
             farm_id=farm_id,
-            code=serializer.validated_data['code'],
             name=serializer.validated_data['name'],
             status=serializer.validated_data.get('status', 'active'),
             capacity=serializer.validated_data['capacity'],
@@ -104,6 +103,10 @@ class PondListCreateView(APIView):
             created_at=timezone.now(),
             updated_at=timezone.now(),
         )
+        
+        # Generar code automáticamente con formato POND-{id}
+        pond.code = f"POND-{pond.id}"
+        pond.save(update_fields=['code'])
 
         return Response(
             PondResponseSerializer(pond).data,
