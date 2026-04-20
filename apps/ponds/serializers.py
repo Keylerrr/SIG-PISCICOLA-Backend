@@ -32,6 +32,11 @@ class PondUpdateSerializer(serializers.ModelSerializer):
             'description': {'required': False},
         }
 
+    def validate(self, data):
+        if 'code' in self.initial_data:
+            raise serializers.ValidationError({"code": "The pond code cannot be modified."})
+        return data
+
     def validate_capacity(self, value):
         if value is not None and value <= 0:
             raise serializers.ValidationError("Capacity must be greater than 0.")
