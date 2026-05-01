@@ -5,6 +5,10 @@ from .enums import FarmPermission
 from .models import UserFarm
 
 
+def _get_farm_pk(view):
+    return view.kwargs.get("farm_pk") or view.kwargs.get("pk")
+
+
 def _get_user_farm(user, farm_pk) -> UserFarm | None:
     try:
         return UserFarm.objects.select_related("farm").get(
@@ -18,7 +22,7 @@ def _get_user_farm(user, farm_pk) -> UserFarm | None:
 
 class IsFarmOwner(BasePermission):
     def has_permission(self, request, view):
-        farm_pk = view.kwargs.get("farm_pk") or view.kwargs.get("pk")
+        farm_pk = _get_farm_pk(view)
         if not farm_pk:
             return True
         uf = _get_user_farm(request.user, farm_pk)
@@ -29,7 +33,7 @@ class HasFarmPermission(BasePermission):
     required_permission: FarmPermission = FarmPermission.VIEW
 
     def has_permission(self, request, view):
-        farm_pk = view.kwargs.get("farm_pk") or view.kwargs.get("pk")
+        farm_pk = _get_farm_pk(view)
         if not farm_pk:
             return True
 

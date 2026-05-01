@@ -12,5 +12,6 @@ class UnitView(viewsets.ModelViewSet):
 
 
 class AuditLogView(viewsets.ModelViewSet):
+    permission_classes = [IsAdmin]
     queryset = AuditLog.objects.all()
     serializer_class = AuditLogSerializer

@@ -24,10 +24,7 @@ class CompleteProfileSerializer(serializers.ModelSerializer):
         return value
 
     def update(self, instance, validated_data):
-        for (
-            attr,
-            val,
-        ) in validated_data.items():
+        for attr, val in validated_data.items():
             setattr(instance, attr, val)
         instance.is_profile_complete = True
         instance.save()
@@ -38,8 +35,7 @@ class InviteProductorSerializer(serializers.Serializer):
     email = serializers.EmailField()
 
     def validate_email(self, value):
-        user = User.objects.filter(email=value).first()
-        if user:
+        if User.objects.filter(email=value).exists():
             raise serializers.ValidationError("Ya está registrado ese correo.")
         return value
 
@@ -65,7 +61,7 @@ class InviteOperarioSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     "No tienes permisos sobre esta granja."
                 )
-            return value
+        return value
 
 
 class InvitationSerializer(serializers.ModelSerializer):
@@ -204,7 +200,7 @@ class ProductorSerializer(serializers.ModelSerializer):
         operarios = User.objects.filter(
             user_farms__farm_id__in=farm_ids,
             role__name="Operario",
-        ).distinct()
+        ).select_related("role").distinct()
 
         return OperarioSerializer(operarios, many=True).data
 

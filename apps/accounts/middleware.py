@@ -12,12 +12,13 @@ class ForceTempPasswordChangeMiddleware:
 
     def __call__(self, request):
         user = getattr(request, "user", None)
+        path = request.path
         if (
             user
             and user.is_authenticated
             and getattr(user, "is_temp_password", False)
-            and request.path not in TEMP_PASSWORD_EXEMPT
-            and not any(request.path.startswith(p) for p in TEMP_PASSWORD_EXEMPT)
+            and path not in TEMP_PASSWORD_EXEMPT
+            and not any(path.startswith(prefix) for prefix in TEMP_PASSWORD_EXEMPT)
         ):
             return JsonResponse(
                 {"detail": "Debes cambiar tu contraseña antes de continuar."},
@@ -27,8 +28,8 @@ class ForceTempPasswordChangeMiddleware:
             user
             and user.is_authenticated
             and not getattr(user, "is_profile_complete", True)
-            and request.path not in PROFILE_EXEMPT
-            and not any(request.path.startswith(p) for p in TEMP_PASSWORD_EXEMPT)
+            and path not in PROFILE_EXEMPT
+            and not any(path.startswith(prefix) for prefix in PROFILE_EXEMPT)
         ):
             return JsonResponse(
                 {"detail": "Debes completar tu perfil antes de continuar."},

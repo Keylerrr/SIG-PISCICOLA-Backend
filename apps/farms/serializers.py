@@ -2,8 +2,8 @@
 from django.apps import apps
 from rest_framework import serializers
 
+from .enums import FarmPermission
 from .models import City, Department, Farm, FarmRole, UserFarm
-from .permissions import FarmPermission
 
 
 class UserSummarySerializer(serializers.ModelSerializer):
@@ -73,26 +73,24 @@ class FarmSerializer(serializers.ModelSerializer):
     def validate(self, data):
         user = self.context["request"].user
 
-        if self.instance is None:  # solo en creación
-            if user.role.name == "Admin":
-                if "productor_id" not in data:
-                    raise serializers.ValidationError(
-                        {
-                            "user_id": "Un Admin debe asignar un Productor al crear una granja."
-                        }
-                    )
-                from django.contrib.auth import get_user_model
+        if self.instance is not None or user.role.name != "Admin":
+            return data
 
-                User = get_user_model()
-                try:
-                    productor = User.objects.get(
-                        pk=data["productor_id"], role__name="Productor"
-                    )
-                except User.DoesNotExist:
-                    raise serializers.ValidationError(
-                        {"productor_id": "No existe un Productor con ese ID."}
-                    )
-                data["_productor"] = productor
+        if "productor_id" not in data:
+            raise serializers.ValidationError(
+                {"user_id": "Un Admin debe asignar un Productor al crear una granja."}
+            )
+
+        from django.contrib.auth import get_user_model
+
+        user_model = get_user_model()
+        try:
+            productor = user_model.objects.get(pk=data["productor_id"], role__name="Productor")
+        except user_model.DoesNotExist:
+            raise serializers.ValidationError(
+                {"productor_id": "No existe un Productor con ese ID."}
+            )
+        data["_productor"] = productor
 
         return data
 
@@ -140,12 +138,11 @@ class FarmRoleSerializer(serializers.ModelSerializer):
 
 
 class UserFarmSerializer(serializers.ModelSerializer):
-
-    User = apps.get_model("accounts", "User")
+    user_model = apps.get_model("accounts", "User")
     permissions = PermissionsField(required=False, default=0)
     user = UserSummarySerializer(read_only=True)
     user_id = serializers.PrimaryKeyRelatedField(
-        queryset=User.objects.all(),
+        queryset=user_model.objects.all(),
         source="user",
         write_only=True,
     )

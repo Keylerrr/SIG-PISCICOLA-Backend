@@ -1,6 +1,26 @@
 # permissions.py
 from rest_framework.permissions import BasePermission
 
+ROLE_ADMIN = "Admin"
+ROLE_PRODUCTOR = "Productor"
+ROLE_OPERARIO = "Operario"
+
+ALLOWED_PATH_PREFIXES = (
+    "/api/users/me/complete/",
+    "/api/auth/logout/",
+    "/api/invitations/",
+)
+
+
+class RolePermission(BasePermission):
+    role_name = None
+
+    def has_permission(self, request, view):
+        return (
+            request.user.is_authenticated
+            and request.user.role.name == self.role_name
+        )
+
 
 class CompletionPermission(BasePermission):
     message = "Debes completar tu perfil antes de continuar."
@@ -11,12 +31,7 @@ class CompletionPermission(BasePermission):
         if not user or not user.is_authenticated:
             return False
 
-        allowed_paths = [
-            "/api/users/me/complete/",
-            "/api/auth/logout/",
-        ]
-
-        if request.path in allowed_paths:
+        if any(request.path.startswith(prefix) for prefix in ALLOWED_PATH_PREFIXES):
             return True
 
         if user.is_temp_password:
@@ -28,19 +43,16 @@ class CompletionPermission(BasePermission):
         return True
 
 
-class IsAdmin(BasePermission):
-    def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.role.name == "Admin"
+class IsAdmin(RolePermission):
+    role_name = ROLE_ADMIN
 
 
-class IsProductor(BasePermission):
-    def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.role.name == "Productor"
+class IsProductor(RolePermission):
+    role_name = ROLE_PRODUCTOR
 
 
-class IsOperario(BasePermission):
-    def has_permission(self, request, view):
-        return request.user.is_authenticated and request.user.role.name == "Operario"
+class IsOperario(RolePermission):
+    role_name = ROLE_OPERARIO
 
 
 def AdminOr(permission_class):

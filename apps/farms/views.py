@@ -2,16 +2,14 @@
 from django.utils import timezone
 from rest_framework import generics, mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-from apps.accounts.permissions import (AdminOr, CompletionPermission, IsAdmin,
-                                       IsAdminOrValid, IsProductor)
+from apps.accounts.permissions import AdminOr, IsProductor
 
 from .enums import FarmPermission
 from .models import City, Department, Farm, FarmRole, UserFarm
-from .permissions import (CanDeleteFarm, CanEditFarm, CanManageRoles,
-                          CanManageUsers, CanViewFarm, IsFarmOwner)
+from .permissions import CanDeleteFarm, CanEditFarm, CanManageUsers, CanViewFarm, IsFarmOwner
 from .serializers import (CitySerializer, DepartmentSerializer,
                           FarmRoleSerializer, FarmSerializer,
                           UserFarmSerializer)
@@ -39,6 +37,10 @@ class CityListView(generics.ListAPIView):
 class FarmViewSet(viewsets.ModelViewSet):
     serializer_class = FarmSerializer
 
+    @staticmethod
+    def _base_queryset():
+        return Farm.objects.filter(deleted_at__isnull=True).select_related("department", "city")
+
     def get_permissions(self):
         if self.action == "create":
             perms = [AdminOr(IsProductor)]
@@ -52,23 +54,19 @@ class FarmViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        queryset = self._base_queryset().order_by("-id")
+
         if user.role.name == "Admin":
-            qs = Farm.objects.filter(deleted_at__isnull=True).distinct().order_by("-id")
             productor_id = self.request.query_params.get("productor_id")
             if productor_id:
-                qs = qs.filter(
+                queryset = queryset.filter(
                     user_farms__user_id=productor_id,
                     user_farms__is_owner=True,
                 )
-            return qs
+            return queryset.distinct()
 
-        return (
-            Farm.objects.filter(
-                user_farms__user=user,
-                deleted_at__isnull=True,
-            )
-            .distinct()
-            .order_by("-id")
+        return queryset.filter(
+            user_farms__user=user,
         )
 
     def perform_create(self, serializer):
@@ -103,10 +101,9 @@ class FarmViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
         farms = (
-            Farm.objects.filter(
+            self._base_queryset().filter(
                 user_farms__user_id=productor_id,
                 user_farms__is_owner=True,
-                deleted_at__isnull=True,
             )
             .distinct()
             .order_by("-id")

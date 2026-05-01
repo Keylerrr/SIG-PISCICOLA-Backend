@@ -10,8 +10,7 @@ from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import Invitation, User
-from .permissions import (AdminOr, CompletionPermission, IsAdmin,
-                          IsAdminOrValid, IsProductor)
+from .permissions import AdminOr, IsAdmin, IsAdminOrValid, IsProductor
 from .serializers import (ChangePasswordSerializer, CompleteProfileSerializer,
                           ConfirmResetPasswordSerializer, InvitationSerializer,
                           InviteOperarioSerializer, InviteProductorSerializer,
@@ -27,6 +26,14 @@ def get_tokens_for_user(user):
         "refresh": str(refresh),
         "access": str(refresh.access_token),
     }
+
+
+def get_pending_invitation(invitation_id, user):
+    return Invitation.objects.filter(
+        pk=invitation_id,
+        user=user,
+        status=Invitation.Status.PENDING,
+    ).first()
 
 
 class ChangePasswordView(APIView):
@@ -138,7 +145,11 @@ class InvitationListView(generics.ListAPIView):
     permission_classes = [AdminOr(IsProductor)]
 
     def get_queryset(self):
-        return Invitation.objects.filter(invited_by=self.request.user)
+        return Invitation.objects.filter(invited_by=self.request.user).select_related(
+            "invited_by",
+            "user",
+            "farm_id",
+        )
 
 
 class InvitationDetailView(generics.RetrieveAPIView):
@@ -146,19 +157,18 @@ class InvitationDetailView(generics.RetrieveAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return Invitation.objects.filter(user=self.request.user)
+        return Invitation.objects.filter(user=self.request.user).select_related(
+            "invited_by",
+            "user",
+            "farm_id",
+        )
 
 
 class AcceptInvitationView(APIView):
-    permission_classes = [CompletionPermission | IsAdmin]
-    permission_classes = [AdminOr]
+    permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, pk):
-        invitation = Invitation.objects.filter(
-            pk=pk,
-            user=request.user,
-            status=Invitation.Status.PENDING,
-        ).first()
+        invitation = get_pending_invitation(pk, request.user)
         if not invitation:
             return Response(
                 {"detail": "Invitación no encontrada o ya procesada."},
@@ -175,15 +185,11 @@ class RejectInvitationView(APIView):
     permission_classes = [IsAdminOrValid]
 
     def post(self, request, pk):
-        invitation = Invitation.objects.filter(
-            pk=pk,
-            user=request.user,
-            status=Invitation.Status.PENDING,
-        ).first()
+        invitation = get_pending_invitation(pk, request.user)
 
         if not invitation:
             return Response(
-                {"detail": "INvitación no encontrada o ya procesada."},
+                {"detail": "Invitación no encontrada o ya procesada."},
                 status=status.HTTP_404_NOT_FOUND,
             )
         invitation.status = Invitation.Status.REJECTED
@@ -192,7 +198,6 @@ class RejectInvitationView(APIView):
             {"detail": "Invitación rechazada."},
             status=status.HTTP_200_OK,
         )
-
 
 class ProfileView(generics.RetrieveUpdateAPIView):
     serializer_class = UserProfileSerializer
@@ -228,8 +233,8 @@ class ConfirmResetPasswordView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def get(self, request, uuidb64, token):
-        user = self._get_user(uuidb64)
-        if not user or not PasswordResetTokenGenerator().check_token(user, token):
+        user = self._get_valid_user_from_token(uuidb64, token)
+        if not user:
             return Response(
                 {"error": "Token inválido o expirado."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -238,8 +243,8 @@ class ConfirmResetPasswordView(APIView):
         return Response({"message": "Token válido."}, status=status.HTTP_200_OK)
 
     def post(self, request, uuidb64, token):
-        user = self._get_user(uuidb64)
-        if not user or not PasswordResetTokenGenerator().check_token(user, token):
+        user = self._get_valid_user_from_token(uuidb64, token)
+        if not user:
             return Response(
                 {"error": "Token inválido o expirado."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -261,6 +266,12 @@ class ConfirmResetPasswordView(APIView):
             return User.objects.get(pk=uid)
         except Exception:
             return None
+
+    def _get_valid_user_from_token(self, uuidb64, token):
+        user = self._get_user(uuidb64)
+        if not user:
+            return None
+        return user if PasswordResetTokenGenerator().check_token(user, token) else None
 
 
 class AdminListView(generics.ListAPIView):

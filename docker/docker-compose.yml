@@ -13,6 +13,9 @@ services:
       DATABASE_PASSWORD: wiiw
       DATABASE_HOST: db
       DATABASE_PORT: 5432
+      EMAIL_HOST_USER: pawsy1225@gmail.com
+      EMAIL_HOST_PASSWORD: snih gqwz fcyc qzkv
+      DEFAULT_FROM_EMAIL: pawsy1225@gmail.com
     volumes:
       - ../:/app
     depends_on:
