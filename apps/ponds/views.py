@@ -22,7 +22,9 @@ def _get_farm(farm_id):
 
 
 def _farm_not_found_response():
-    return Response({"detail": "Granja no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+    return Response(
+        {"detail": "Granja no encontrada."}, status=status.HTTP_404_NOT_FOUND
+    )
 
 
 class PondListCreateView(APIView):
