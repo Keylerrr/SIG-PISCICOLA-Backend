@@ -44,17 +44,14 @@ class IsOperario(BasePermission):
 
 
 def AdminOr(permission_class):
-    def has_permission(self, request, view):
-        return IsAdmin().has_permission(request, view) or (
-            CompletionPermission().has_permission(request, view)
-            and permission_class().has_permission(request, view)
-        )
+    class _Permission(BasePermission):
+        def has_permission(self, request, view):
+            return IsAdmin().has_permission(request, view) or (
+                CompletionPermission().has_permission(request, view)
+                and permission_class().has_permission(request, view)
+            )
 
-    return type(
-        f"IsAdminOr{permission_class.__name__}",
-        (BasePermission,),
-        {"has_permission": has_permission},
-    )
+    return _Permission
 
 
 class IsAdminOrValid(BasePermission):
