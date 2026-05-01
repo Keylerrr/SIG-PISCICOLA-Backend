@@ -1,0 +1,299 @@
+# views.py
+
+from django.apps import apps
+from django.contrib.auth.tokens import PasswordResetTokenGenerator
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from rest_framework import generics, permissions, status
+from rest_framework.response import Response
+from rest_framework.views import APIView
+from rest_framework_simplejwt.tokens import RefreshToken
+
+from .models import Invitation, User
+from .permissions import (AdminOr, CompletionPermission, IsAdmin,
+                          IsAdminOrValid, IsProductor)
+from .serializers import (ChangePasswordSerializer, CompleteProfileSerializer,
+                          ConfirmResetPasswordSerializer, InvitationSerializer,
+                          InviteOperarioSerializer, InviteProductorSerializer,
+                          LoginSerializer, OperarioSerializer,
+                          ResetPasswordSerializer, UserProfileSerializer)
+from .utils import (accept_invitation, change_user_password, invite_operario,
+                    invite_productor, send_reset_password_email)
+
+
+def get_tokens_for_user(user):
+    refresh = RefreshToken.for_user(user)
+    return {
+        "refresh": str(refresh),
+        "access": str(refresh.access_token),
+    }
+
+
+class ChangePasswordView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = ChangePasswordSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(
+            {"detail": "Contraseña actualizada correctamente."},
+            status=status.HTTP_200_OK,
+        )
+
+
+class LoginView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = LoginSerializer(data=request.data, context={"request": request})
+        serializer.is_valid(raise_exception=True)
+        user = serializer.validated_data["user"]
+        return Response(
+            {"tokens": get_tokens_for_user(user)},
+            status=status.HTTP_200_OK,
+        )
+
+
+class LogoutView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        try:
+            refresh_token = request.data["refresh"]
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except Exception:
+            return Response(status=status.HTTP_400_BAD_REQUEST)
+
+
+class CompleteProfileView(APIView):
+    permission_classes = [IsAdminOrValid]
+
+    def post(self, request):
+        if request.user.is_profile_complete:
+            return Response(
+                {"detail": "El perfil ya está completo."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        serializer = CompleteProfileSerializer(
+            request.user, data=request.data, context={"request": request}
+        )
+
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(
+            {"detail": "Perfil completado correctamente."},
+            status=status.HTTP_200_OK,
+        )
+
+
+class InviteProductorView(APIView):
+    permission_classes = [IsAdmin]
+
+    def post(self, request):
+        serializer = InviteProductorSerializer(
+            data=request.data, context={"request": request}
+        )
+        serializer.is_valid(raise_exception=True)
+        invite_productor(
+            email=serializer.validated_data["email"],
+            creator=request.user,
+        )
+        return Response(
+            {"detail": "Invitación enviada al Productor."},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class InviteOperarioView(APIView):
+    permission_classes = [AdminOr(IsProductor)]
+
+    def post(self, request):
+        serializer = InviteOperarioSerializer(
+            data=request.data, context={"request": request}
+        )
+        serializer.is_valid(raise_exception=True)
+        try:
+            invite_operario(
+                email=serializer.validated_data["email"],
+                farm_id=serializer.validated_data["farm_id"],
+                creator=request.user,
+            )
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(
+            {"detail": "Invitación procesada correctamente."},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class InvitationListView(generics.ListAPIView):
+    serializer_class = InvitationSerializer
+    permission_classes = [AdminOr(IsProductor)]
+
+    def get_queryset(self):
+        return Invitation.objects.filter(invited_by=self.request.user)
+
+
+class InvitationDetailView(generics.RetrieveAPIView):
+    serializer_class = InvitationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        return Invitation.objects.filter(user=self.request.user)
+
+
+class AcceptInvitationView(APIView):
+    permission_classes = [CompletionPermission | IsAdmin]
+    permission_classes = [AdminOr]
+
+    def post(self, request, pk):
+        invitation = Invitation.objects.filter(
+            pk=pk,
+            user=request.user,
+            status=Invitation.Status.PENDING,
+        ).first()
+        if not invitation:
+            return Response(
+                {"detail": "Invitación no encontrada o ya procesada."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        accept_invitation(invitation, request.user)
+        return Response(
+            {"detail": "Invitación aceptada."},
+            status=status.HTTP_200_OK,
+        )
+
+
+class RejectInvitationView(APIView):
+    permission_classes = [IsAdminOrValid]
+
+    def post(self, request, pk):
+        invitation = Invitation.objects.filter(
+            pk=pk,
+            user=request.user,
+            status=Invitation.Status.PENDING,
+        ).first()
+
+        if not invitation:
+            return Response(
+                {"detail": "INvitación no encontrada o ya procesada."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        invitation.status = Invitation.Status.REJECTED
+        invitation.save(update_fields=["status"])
+        return Response(
+            {"detail": "Invitación rechazada."},
+            status=status.HTTP_200_OK,
+        )
+
+
+class ProfileView(generics.RetrieveUpdateAPIView):
+    serializer_class = UserProfileSerializer
+    permission_classes = [IsAdminOrValid]
+
+    def get_object(self):
+        return self.request.user
+
+
+class ResetPasswordView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        serializer = ResetPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        email = serializer.validated_data["email"]
+        user = User.objects.filter(email=email).first()
+
+        if user:
+            token_generator = PasswordResetTokenGenerator()
+            uuidb64 = urlsafe_base64_encode(force_bytes(user.pk))
+            token = token_generator.make_token(user)
+            send_reset_password_email(user.email, uuidb64, token)
+
+        return Response(
+            {"message": "Si el correo existe en la plataforma, se envió el enlace."},
+            status=status.HTTP_200_OK,
+        )
+
+
+class ConfirmResetPasswordView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request, uuidb64, token):
+        user = self._get_user(uuidb64)
+        if not user or not PasswordResetTokenGenerator().check_token(user, token):
+            return Response(
+                {"error": "Token inválido o expirado."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response({"message": "Token válido."}, status=status.HTTP_200_OK)
+
+    def post(self, request, uuidb64, token):
+        user = self._get_user(uuidb64)
+        if not user or not PasswordResetTokenGenerator().check_token(user, token):
+            return Response(
+                {"error": "Token inválido o expirado."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = ConfirmResetPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        change_user_password(user, serializer.validated_data["new_password"])
+        return Response(
+            {"detail": "Contraseña restablecida correctamente."},
+            status=status.HTTP_200_OK,
+        )
+
+    @staticmethod
+    def _get_user(uuidb64):
+        try:
+            uid = urlsafe_base64_decode(uuidb64).decode()
+            return User.objects.get(pk=uid)
+        except Exception:
+            return None
+
+
+class AdminListView(generics.ListAPIView):
+    serializer_class = OperarioSerializer
+    permission_classes = [IsAdmin]
+
+    def get_queryset(self):
+        return User.objects.filter(role__name="Admin")
+
+
+class ProductorListView(generics.ListAPIView):
+    serializer_class = OperarioSerializer
+    permission_classes = [IsAdmin]
+
+    def get_queryset(self):
+        return User.objects.filter(role__name="Productor")
+
+
+class ProductorOperarioListView(generics.ListAPIView):
+    serializer_class = OperarioSerializer
+    permission_classes = [IsAdmin]
+
+    def get_queryset(self):
+
+        UserFarm = apps.get_model("farms", "UserFarm")
+        productor_id = self.kwargs["productor_id"]
+
+        farm_ids = UserFarm.objects.filter(
+            user_id=productor_id,
+            is_owner=True,
+        ).values_list("farm_id", flat=True)
+
+        return User.objects.filter(
+            user_farms__farm_id__in=farm_ids,
+            role__name="Operario",
+        ).distinct()

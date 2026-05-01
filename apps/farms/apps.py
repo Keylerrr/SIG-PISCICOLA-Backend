@@ -1,7 +1,7 @@
 from django.apps import AppConfig
 
 
-class PondConfig(AppConfig):
+class FarmConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
-    name = "apps.ponds"
-    label = "ponds"
+    name = "apps.farms"
+    label = "farms"

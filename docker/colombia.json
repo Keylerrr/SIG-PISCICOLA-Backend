@@ -1,0 +1,183 @@
+[
+  { "model": "farms.department", "pk": 1, "fields": { "name": "Amazonas" } },
+  { "model": "farms.department", "pk": 2, "fields": { "name": "Antioquia" } },
+  { "model": "farms.department", "pk": 3, "fields": { "name": "Arauca" } },
+  { "model": "farms.department", "pk": 4, "fields": { "name": "Atlántico" } },
+  { "model": "farms.department", "pk": 5, "fields": { "name": "Bolívar" } },
+  { "model": "farms.department", "pk": 6, "fields": { "name": "Boyacá" } },
+  { "model": "farms.department", "pk": 7, "fields": { "name": "Caldas" } },
+  { "model": "farms.department", "pk": 8, "fields": { "name": "Caquetá" } },
+  { "model": "farms.department", "pk": 9, "fields": { "name": "Casanare" } },
+  { "model": "farms.department", "pk": 10, "fields": { "name": "Cauca" } },
+  { "model": "farms.department", "pk": 11, "fields": { "name": "Cesar" } },
+  { "model": "farms.department", "pk": 12, "fields": { "name": "Chocó" } },
+  { "model": "farms.department", "pk": 13, "fields": { "name": "Córdoba" } },
+  {
+    "model": "farms.department",
+    "pk": 14,
+    "fields": { "name": "Cundinamarca" }
+  },
+  { "model": "farms.department", "pk": 15, "fields": { "name": "Guainía" } },
+  { "model": "farms.department", "pk": 16, "fields": { "name": "Guaviare" } },
+  { "model": "farms.department", "pk": 17, "fields": { "name": "Huila" } },
+  { "model": "farms.department", "pk": 18, "fields": { "name": "La Guajira" } },
+  { "model": "farms.department", "pk": 19, "fields": { "name": "Magdalena" } },
+  { "model": "farms.department", "pk": 20, "fields": { "name": "Meta" } },
+  { "model": "farms.department", "pk": 21, "fields": { "name": "Nariño" } },
+  {
+    "model": "farms.department",
+    "pk": 22,
+    "fields": { "name": "Norte de Santander" }
+  },
+  { "model": "farms.department", "pk": 23, "fields": { "name": "Putumayo" } },
+  { "model": "farms.department", "pk": 24, "fields": { "name": "Quindío" } },
+  { "model": "farms.department", "pk": 25, "fields": { "name": "Risaralda" } },
+  {
+    "model": "farms.department",
+    "pk": 26,
+    "fields": { "name": "San Andrés y Providencia" }
+  },
+  { "model": "farms.department", "pk": 27, "fields": { "name": "Santander" } },
+  { "model": "farms.department", "pk": 28, "fields": { "name": "Sucre" } },
+  { "model": "farms.department", "pk": 29, "fields": { "name": "Tolima" } },
+  {
+    "model": "farms.department",
+    "pk": 30,
+    "fields": { "name": "Valle del Cauca" }
+  },
+  { "model": "farms.department", "pk": 31, "fields": { "name": "Vaupés" } },
+  { "model": "farms.department", "pk": 32, "fields": { "name": "Vichada" } },
+
+  {
+    "model": "farms.city",
+    "pk": 1,
+    "fields": { "name": "Leticia", "department": 1 }
+  },
+
+  {
+    "model": "farms.city",
+    "pk": 2,
+    "fields": { "name": "Medellín", "department": 2 }
+  },
+  {
+    "model": "farms.city",
+    "pk": 3,
+    "fields": { "name": "Envigado", "department": 2 }
+  },
+  {
+    "model": "farms.city",
+    "pk": 4,
+    "fields": { "name": "Bello", "department": 2 }
+  },
+
+  {
+    "model": "farms.city",
+    "pk": 5,
+    "fields": { "name": "Barranquilla", "department": 4 }
+  },
+
+  {
+    "model": "farms.city",
+    "pk": 6,
+    "fields": { "name": "Cartagena", "department": 5 }
+  },
+
+  {
+    "model": "farms.city",
+    "pk": 7,
+    "fields": { "name": "Tunja", "department": 6 }
+  },
+
+  {
+    "model": "farms.city",
+    "pk": 8,
+    "fields": { "name": "Bogotá", "department": 14 }
+  },
+
+  {
+    "model": "farms.city",
+    "pk": 9,
+    "fields": { "name": "Neiva", "department": 17 }
+  },
+
+  {
+    "model": "farms.city",
+    "pk": 10,
+    "fields": { "name": "Riohacha", "department": 18 }
+  },
+
+  {
+    "model": "farms.city",
+    "pk": 11,
+    "fields": { "name": "Santa Marta", "department": 19 }
+  },
+
+  {
+    "model": "farms.city",
+    "pk": 12,
+    "fields": { "name": "Villavicencio", "department": 20 }
+  },
+
+  {
+    "model": "farms.city",
+    "pk": 13,
+    "fields": { "name": "Pasto", "department": 21 }
+  },
+
+  {
+    "model": "farms.city",
+    "pk": 14,
+    "fields": { "name": "Cúcuta", "department": 22 }
+  },
+  {
+    "model": "farms.city",
+    "pk": 15,
+    "fields": { "name": "Villa del Rosario", "department": 22 }
+  },
+  {
+    "model": "farms.city",
+    "pk": 16,
+    "fields": { "name": "Los Patios", "department": 22 }
+  },
+  {
+    "model": "farms.city",
+    "pk": 17,
+    "fields": { "name": "El Zulia", "department": 22 }
+  },
+
+  {
+    "model": "farms.city",
+    "pk": 18,
+    "fields": { "name": "Armenia", "department": 24 }
+  },
+
+  {
+    "model": "farms.city",
+    "pk": 19,
+    "fields": { "name": "Pereira", "department": 25 }
+  },
+
+  {
+    "model": "farms.city",
+    "pk": 20,
+    "fields": { "name": "Bucaramanga", "department": 27 }
+  },
+
+  {
+    "model": "farms.city",
+    "pk": 21,
+    "fields": { "name": "Sincelejo", "department": 28 }
+  },
+
+  {
+    "model": "farms.city",
+    "pk": 22,
+    "fields": { "name": "Ibagué", "department": 29 }
+  },
+
+  {
+    "model": "farms.city",
+    "pk": 23,
+    "fields": { "name": "Cali", "department": 30 }
+  }
+]
