@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "apps.batch",
     "apps.cycle",
     "apps.events",
+    "apps.species",
 ]
 
 MIDDLEWARE = [
