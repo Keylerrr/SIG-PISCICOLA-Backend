@@ -25,6 +25,18 @@ class ProductionPlanSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["version", "is_current", "parent", "created_at", "updated_at"]
 
+
+        def validate(self, data):
+            pond = data.get("pond") or (self.instance.pond if self.instance else None)
+            
+            BLOCKED_STATUSES = ["inactive", "cleaning"]
+            
+            if pond and pond.status in BLOCKED_STATUSES:
+                raise serializers.ValidationError(
+                    f"No se puede crear ni editar un ciclo en un estanque con estado '{pond.get_status_display()}'."
+                )
+            return data
+
     def update(self, instance, validated_data):
         if not instance.is_current:
             raise serializers.ValidationError(
