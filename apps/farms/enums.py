@@ -3,14 +3,37 @@ from enum import IntFlag
 
 
 class FarmPermission(IntFlag):
-    VIEW = 1 << 0  #  1
-    EDIT = 1 << 1  #  2
-    DELETE = 1 << 2  #  4
-    MANAGE_USERS = 1 << 3  #  8
-    MANAGE_ROLES = 1 << 4  # 16
+    MANAGE_REVIEWS = 1 << 0  #  1
+    MANAGE_INVENTORY = 1 << 1  #  2
+    MANAGE_CYCLE = 1 << 2  #  4
+    MANAGE_POND = 1 << 3  #  8
+    MANAGE_FARM = 1 << 4  # 16
 
     ALL = (1 << 5) - 1  # 31
 
     @classmethod
     def choices(cls):
         return [(p.name, p.name) for p in cls if p != cls.ALL]
+
+
+PERMISSION_IMPLIES: dict[FarmPermission, FarmPermission] = {
+    FarmPermission.MANAGE_FARM: FarmPermission.ALL,
+    FarmPermission.MANAGE_POND: (
+        FarmPermission.MANAGE_POND
+        | FarmPermission.MANAGE_CYCLE
+        | FarmPermission.MANAGE_REVIEWS
+    ),
+    FarmPermission.MANAGE_CYCLE: (
+        FarmPermission.MANAGE_CYCLE | FarmPermission.MANAGE_REVIEWS
+    ),
+    FarmPermission.MANAGE_INVENTORY: FarmPermission.MANAGE_INVENTORY,
+    FarmPermission.MANAGE_REVIEWS: FarmPermission.MANAGE_REVIEWS,
+}
+
+
+def expand_permissions(stored: int) -> int:
+    result = 0
+    for perm, implied in PERMISSION_IMPLIES.items():
+        if stored & perm:
+            result |= int(implied)
+    return result

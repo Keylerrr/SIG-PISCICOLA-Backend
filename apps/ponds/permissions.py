@@ -65,5 +65,4 @@ class PondListPermission(BasePermission):
                 or is_productor
                 or IsActiveFarmMember().has_permission(request, view)
             )
-        # POST solo Admin y Productor
         return is_admin or is_productor

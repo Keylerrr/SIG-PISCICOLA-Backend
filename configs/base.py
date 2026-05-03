@@ -33,6 +33,8 @@ INSTALLED_APPS = [
     "apps.cycle",
     "apps.events",
     "apps.species",
+    "apps.products",
+    "apps.purchases",
 ]
 
 MIDDLEWARE = [
