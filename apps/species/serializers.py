@@ -78,6 +78,17 @@ class SpecieParameterSerializer(serializers.ModelSerializer):
         min_value = data.get("min_value", getattr(self.instance, "min_value", None))
         max_value = data.get("max_value", getattr(self.instance, "max_value", None))
         alert_threshold = data.get("alert_threshold", getattr(self.instance, "alert_threshold", None))
+        parameter_type = data.get("parameter_type", getattr(self.instance, "parameter_type", None))
+        specie = self.context.get("specie")
+
+        if specie and parameter_type:
+            qs = SpecieParameter.objects.filter(specie=specie, parameter_type=parameter_type)
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    {"parameter_type": "Esta especie ya tiene registrado este tipo de parámetro."}
+                )
 
         if min_value is not None and max_value is not None:
             if min_value >= max_value:
@@ -171,6 +182,17 @@ class SpecieFeedingReferenceSerializer(serializers.ModelSerializer):
         fca_max = data.get("reference_fca_max", getattr(self.instance, "reference_fca_max", None))
         gain_min = data.get("reference_daily_gain_g_min", getattr(self.instance, "reference_daily_gain_g_min", None))
         gain_max = data.get("reference_daily_gain_g_max", getattr(self.instance, "reference_daily_gain_g_max", None))
+        stage = data.get("stage", getattr(self.instance, "stage", None))
+        specie = self.context.get("specie")
+
+        if specie and stage:
+            qs = SpecieFeedingReference.objects.filter(specie=specie, stage=stage)
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    {"stage": "Esta especie ya tiene una referencia de alimentación para esta etapa."}
+                )
 
         if min_w is not None and max_w is not None and min_w > max_w:
             raise serializers.ValidationError(
@@ -243,6 +265,17 @@ class SpecieProductionReferenceSerializer(serializers.ModelSerializer):
         mort_max = data.get("reference_mortality_rate_max", getattr(self.instance, "reference_mortality_rate_max", None))
         weight_min = data.get("reference_final_weight_min_g", getattr(self.instance, "reference_final_weight_min_g", None))
         weight_max = data.get("reference_final_weight_max_g", getattr(self.instance, "reference_final_weight_max_g", None))
+        production_type = data.get("type", getattr(self.instance, "type", None))
+        specie = self.context.get("specie")
+
+        if specie and production_type:
+            qs = SpecieProductionReference.objects.filter(specie=specie, type=production_type)
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    {"type": "Esta especie ya tiene una referencia de producción para este tipo."}
+                )
         repro_min = data.get("reference_reproduction_rate_min", getattr(self.instance, "reference_reproduction_rate_min", None))
         repro_max = data.get("reference_reproduction_rate_max", getattr(self.instance, "reference_reproduction_rate_max", None))
 

@@ -143,7 +143,9 @@ class SpecieParameterListCreateView(APIView):
         specie = _get_specie_or_404(specie_id)
         if not specie:
             return _specie_not_found_response()
-        serializer = SpecieParameterSerializer(data=request.data)
+        serializer = SpecieParameterSerializer(
+            data=request.data, context={"specie": specie}
+        )
         serializer.is_valid(raise_exception=True)
         serializer.save(specie=specie)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -204,7 +206,9 @@ class SpecieFeedingReferenceListCreateView(APIView):
         specie = _get_specie_or_404(specie_id)
         if not specie:
             return _specie_not_found_response()
-        serializer = SpecieFeedingReferenceSerializer(data=request.data)
+        serializer = SpecieFeedingReferenceSerializer(
+            data=request.data, context={"specie": specie}
+        )
         serializer.is_valid(raise_exception=True)
         serializer.save(specie=specie)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -265,7 +269,9 @@ class SpecieProductionReferenceListCreateView(APIView):
         specie = _get_specie_or_404(specie_id)
         if not specie:
             return _specie_not_found_response()
-        serializer = SpecieProductionReferenceSerializer(data=request.data)
+        serializer = SpecieProductionReferenceSerializer(
+            data=request.data, context={"specie": specie}
+        )
         serializer.is_valid(raise_exception=True)
         serializer.save(specie=specie)
         return Response(serializer.data, status=status.HTTP_201_CREATED)

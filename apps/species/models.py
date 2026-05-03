@@ -66,6 +66,12 @@ class SpecieParameter(models.Model):
 
     class Meta:
         db_table = "specie_parameter"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["specie", "parameter_type"],
+                name="uq_specie_parameter_type",
+            )
+        ]
 
     def __str__(self):
         return f"{self.specie} — {self.parameter_type}"
@@ -103,6 +109,12 @@ class SpecieFeedingReference(models.Model):
 
     class Meta:
         db_table = "specie_feeding_reference"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["specie", "stage"],
+                name="uq_specie_feeding_reference_stage",
+            )
+        ]
 
     def __str__(self):
         return f"{self.specie} — {self.stage}"
@@ -131,6 +143,12 @@ class SpecieProductionReference(models.Model):
 
     class Meta:
         db_table = "specie_production_reference"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["specie", "type"],
+                name="uq_specie_production_reference_type",
+            )
+        ]
 
     def __str__(self):
         return f"{self.specie} — {self.type}"
