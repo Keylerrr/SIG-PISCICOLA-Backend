@@ -5,13 +5,12 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts.permissions import AdminOr, IsAdmin, IsProductor
+from apps.accounts.permissions import AdminOr, IsProductor
 
 from .models import Pond, UserFarmPond
 from .permissions import PondDetailPermission, PondListPermission
 from .serializers import PondSerializer, UserFarmPondSerializer
-from .utils import (get_pond_members, get_pond_or_404, remove_pond_member,
-                    soft_delete_pond)
+from .utils import get_pond_or_404, remove_pond_member, soft_delete_pond
 
 
 def _get_farm(farm_id):
@@ -22,15 +21,19 @@ def _get_farm(farm_id):
         return None
 
 
+def _farm_not_found_response():
+    return Response(
+        {"detail": "Granja no encontrada."}, status=status.HTTP_404_NOT_FOUND
+    )
+
+
 class PondListCreateView(APIView):
     permission_classes = [PondListPermission]
 
     def get(self, request, farm_id):
         farm = _get_farm(farm_id)
         if not farm:
-            return Response(
-                {"detail": "Granja no encontrada."}, status=status.HTTP_404_NOT_FOUND
-            )
+            return _farm_not_found_response()
 
         qs = Pond.objects.filter(farm=farm, deleted_at__isnull=True).order_by("-id")
 
@@ -46,9 +49,7 @@ class PondListCreateView(APIView):
     def post(self, request, farm_id):
         farm = _get_farm(farm_id)
         if not farm:
-            return Response(
-                {"detail": "Granja no encontrada."}, status=status.HTTP_404_NOT_FOUND
-            )
+            return _farm_not_found_response()
 
         serializer = PondSerializer(
             data=request.data,
@@ -65,9 +66,7 @@ class PondAllowedListView(APIView):
     def get(self, request, farm_id):
         farm = _get_farm(farm_id)
         if not farm:
-            return Response(
-                {"detail": "Granja no encontrada."}, status=status.HTTP_404_NOT_FOUND
-            )
+            return _farm_not_found_response()
 
         ponds = (
             Pond.objects.filter(
@@ -87,9 +86,7 @@ class PondDetailView(APIView):
     def get(self, request, farm_id, pond_id):
         farm = _get_farm(farm_id)
         if not farm:
-            return Response(
-                {"detail": "Granja no encontrada."}, status=status.HTTP_404_NOT_FOUND
-            )
+            return _farm_not_found_response()
 
         pond = get_pond_or_404(farm, pond_id)
         if not pond:
@@ -102,9 +99,7 @@ class PondDetailView(APIView):
     def patch(self, request, farm_id, pond_id):
         farm = _get_farm(farm_id)
         if not farm:
-            return Response(
-                {"detail": "Granja no encontrada."}, status=status.HTTP_404_NOT_FOUND
-            )
+            return _farm_not_found_response()
 
         pond = get_pond_or_404(farm, pond_id)
         if not pond:
@@ -125,9 +120,7 @@ class PondDetailView(APIView):
     def delete(self, request, farm_id, pond_id):
         farm = _get_farm(farm_id)
         if not farm:
-            return Response(
-                {"detail": "Granja no encontrada."}, status=status.HTTP_404_NOT_FOUND
-            )
+            return _farm_not_found_response()
 
         pond = get_pond_or_404(farm, pond_id)
         if not pond:
@@ -145,9 +138,7 @@ class PondMemberListView(APIView):
     def get(self, request, farm_id):
         farm = _get_farm(farm_id)
         if not farm:
-            return Response(
-                {"detail": "Granja no encontrada."}, status=status.HTTP_404_NOT_FOUND
-            )
+            return _farm_not_found_response()
 
         members = UserFarmPond.objects.filter(
             farm=farm,

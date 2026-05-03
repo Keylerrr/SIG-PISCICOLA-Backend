@@ -17,4 +17,5 @@ urlpatterns = [
     path("api/", include("apps.batch.urls")),
     path("api/", include("apps.cycle.urls")),
     path("api/", include("apps.events.urls")),
+    path("api/", include("apps.species.urls")),
 ]

@@ -1,7 +1,3 @@
-# permissions.py
-
-import logging
-
 from rest_framework.permissions import BasePermission
 
 from apps.accounts.permissions import (CompletionPermission, IsAdmin,
@@ -22,7 +18,7 @@ class IsPondMember(BasePermission):
         return UserFarmPond.objects.filter(
             user=request.user,
             pond_id=pond_id,
-            pond_farm_id=farm_id,
+            farm_id=farm_id,
         ).exists()
 
 
