@@ -1,10 +1,10 @@
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
 from apps.accounts.permissions import AdminOr, IsAdmin
-from apps.farms.permissions import IsFarmOwner
+from apps.farms.permissions import CanManageInventory, IsFarmMember
 from apps.purchases.utils import get_product_stock
 
 from .models import Product, Supplier, TypeProduct
@@ -19,7 +19,7 @@ class TypeProductViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "delete"]
 
     def get_permissions(self):
-        if self.action == "list" or self.action == "retrieve":
+        if self.action in ("list", "retrieve"):
             return [AllowAny()]
         return [IsAdmin()]
 
@@ -29,7 +29,9 @@ class ProductViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "delete"]
 
     def get_permissions(self):
-        return [AdminOr(IsFarmOwner)()]
+        if self.action in ("list", "retrieve", "stock", "stock_list"):
+            return [AdminOr(IsFarmMember)()]
+        return [AdminOr(CanManageInventory)()]
 
     def get_queryset(self):
         qs = (
@@ -40,12 +42,9 @@ class ProductViewSet(viewsets.ModelViewSet):
             .select_related("type_product", "unit")
             .order_by("name")
         )
-
-        # GET /farms/{farm_pk}/products/?type_product_id=X
         type_product_id = self.request.query_params.get("type_product_id")
         if type_product_id:
             qs = qs.filter(type_product_id=type_product_id)
-
         return qs
 
     def perform_create(self, serializer):
@@ -69,7 +68,7 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="stock")
     def stock_list(self, request, farm_pk=None):
-        products = self.get_queryset()
+        products = self.get_queryset().annotate_stock()  # ver nota abajo
         data = [
             {
                 "product_id": p.id,
@@ -87,7 +86,9 @@ class SupplierViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "delete"]
 
     def get_permissions(self):
-        return [AdminOr(IsFarmOwner)()]
+        if self.action in ("list", "retrieve"):
+            return [AdminOr(IsFarmMember)()]
+        return [AdminOr(CanManageInventory)()]
 
     def get_queryset(self):
         return Supplier.objects.filter(

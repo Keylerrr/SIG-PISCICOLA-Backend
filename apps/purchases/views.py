@@ -2,7 +2,7 @@ from rest_framework import status, viewsets
 from rest_framework.response import Response
 
 from apps.accounts.permissions import AdminOr
-from apps.farms.permissions import IsFarmOwner
+from apps.farms.permissions import CanManageInventory, IsFarmMember
 
 from .models import Buy, InventoryMovement
 from .serializers import BuySerializer, InventoryMovementSerializer
@@ -14,17 +14,18 @@ class BuyViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "post", "patch", "delete"]
 
     def get_permissions(self):
-        return [AdminOr(IsFarmOwner)()]
+        if self.action in ("list", "retrieve"):
+            return [AdminOr(IsFarmMember)()]  # ver compras → cualquier miembro
+        return [
+            AdminOr(CanManageInventory)()
+        ]  # crear/editar/eliminar → MANAGE_INVENTORY
 
     def get_queryset(self):
         qs = (
-            Buy.objects.filter(
-                farm_id=self.kwargs["farm_pk"],
-            )
+            Buy.objects.filter(farm_id=self.kwargs["farm_pk"])
             .prefetch_related("details")
             .order_by("-date")
         )
-
         date_from = self.request.query_params.get("date_from")
         date_to = self.request.query_params.get("date_to")
         supplier = self.request.query_params.get("supplier_id")
@@ -52,13 +53,12 @@ class InventoryMovementViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = InventoryMovementSerializer
 
     def get_permissions(self):
-        return [AdminOr(IsFarmOwner)()]
+        return [AdminOr(IsFarmMember)()]
 
     def get_queryset(self):
         qs = InventoryMovement.objects.filter(
-            farm_id=self.kwargs["farm_pk"],
+            farm_id=self.kwargs["farm_pk"]
         ).select_related("product")
-
         product_id = self.request.query_params.get("product_id")
         movement_type = self.request.query_params.get("movement_type")
         date_from = self.request.query_params.get("date_from")

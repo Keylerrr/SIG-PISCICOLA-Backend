@@ -199,6 +199,7 @@ class RejectInvitationView(APIView):
             status=status.HTTP_200_OK,
         )
 
+
 class ProfileView(generics.RetrieveUpdateAPIView):
     serializer_class = UserProfileSerializer
     permission_classes = [IsAdminOrValid]

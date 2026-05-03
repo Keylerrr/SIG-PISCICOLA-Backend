@@ -5,7 +5,7 @@ from django.utils import timezone
 from .models import User
 
 MAX_ATTEMPTS = 5
-LOCKOUT_MINUTES = 15
+LOCKOUT_MINUTES = 1
 
 
 class LockableModelBackend(ModelBackend):
