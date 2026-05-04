@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     "apps.species",
     "apps.products",
     "apps.purchases",
+    "apps.feeding",
 ]
 
 MIDDLEWARE = [
