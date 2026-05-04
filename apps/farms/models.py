@@ -35,6 +35,17 @@ class Farm(models.Model):
         ACTIVE = "active", "Activa"
         INACTIVE = "inactive", "Inactiva"
 
+    class WaterSource(models.TextChoices):
+        RIVER = "river", "Río"
+        STREAM = "stream", "Quebrada"
+        LAKE = "lake", "Lago/Laguna"
+        SPRING = "spring", "Manantial"
+        RESERVOIR = "reservoir", "Embalse"
+        DEEP_WELL = "deep_well", "Pozo profundo"
+        MUNICIPAL = "municipal", "Acueducto municipal"
+        IRRIGATION_CANAL = "irrigation_canal", "Canal de riego"
+        RAINWATER = "rainwater", "Agua lluvia"
+
     name = models.CharField(max_length=255)
     department = models.ForeignKey(
         Department, on_delete=models.PROTECT, related_name="farms"
@@ -42,7 +53,11 @@ class Farm(models.Model):
     city = models.ForeignKey(City, on_delete=models.PROTECT, related_name="farms")
     address = models.CharField(max_length=255)
     total_area_ha = models.DecimalField(max_digits=10, decimal_places=2)
-    water_source = models.CharField(max_length=255, blank=True)
+    water_source = models.CharField(
+        max_length=20,
+        choices=WaterSource.choices,
+        blank=True,
+    )
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.ACTIVE
     )
