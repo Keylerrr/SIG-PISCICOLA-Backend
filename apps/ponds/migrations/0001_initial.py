@@ -20,7 +20,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('name', models.CharField(max_length=255)),
-                ('code', models.CharField(max_length=100)),
+                ('code', models.CharField(editable=False, max_length=20)),
                 ('status', models.CharField(choices=[('active', 'Activo'), ('inactive', 'Inactivo'), ('cleaning', 'En limpieza'), ('in_use', 'En uso')], default='active', max_length=20)),
                 ('type', models.CharField(choices=[('dirt', 'Tierra'), ('concrete', 'Concreto'), ('geomembrane', 'Geomembrana'), ('floating_cage', 'Jaula flotante'), ('raceway', 'Canal'), ('round_tank', 'Tanque redondo')], max_length=20)),
                 ('capacity', models.DecimalField(decimal_places=2, max_digits=10)),

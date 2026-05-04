@@ -1,14 +1,13 @@
-# views.py
-
 from django.apps import apps
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.accounts.permissions import AdminOr, IsProductor
+from apps.accounts.permissions import AdminOr
+from apps.farms.permissions import (CanManageFarmUsers, CanManagePond,
+                                    IsFarmMember)
 
 from .models import Pond, UserFarmPond
-from .permissions import PondDetailPermission, PondListPermission
 from .serializers import PondSerializer, UserFarmPondSerializer
 from .utils import get_pond_or_404, remove_pond_member, soft_delete_pond
 
@@ -27,8 +26,35 @@ def _farm_not_found_response():
     )
 
 
+def _pond_not_found_response():
+    return Response(
+        {"detail": "Estanque no encontrado."}, status=status.HTTP_404_NOT_FOUND
+    )
+
+
+def _pond_forbidden_for_operario_response():
+    return Response(
+        {"detail": "No tienes permiso para acceder a este estanque."},
+        status=status.HTTP_403_FORBIDDEN,
+    )
+
+
+def _filter_ponds_for_operario(qs, request, farm):
+    if request.user.role.name == "Operario":
+        pond_ids = UserFarmPond.objects.filter(
+            user=request.user,
+            farm=farm,
+        ).values_list("pond_id", flat=True)
+        qs = qs.filter(id__in=pond_ids)
+    return qs
+
+
 class PondListCreateView(APIView):
-    permission_classes = [PondListPermission]
+
+    def get_permissions(self):
+        if self.request.method == "POST":
+            return [AdminOr(CanManagePond)()]
+        return [AdminOr(IsFarmMember)()]
 
     def get(self, request, farm_id):
         farm = _get_farm(farm_id)
@@ -36,13 +62,7 @@ class PondListCreateView(APIView):
             return _farm_not_found_response()
 
         qs = Pond.objects.filter(farm=farm, deleted_at__isnull=True).order_by("-id")
-
-        if request.user.role.name == "Operario":
-            pond_ids = UserFarmPond.objects.filter(
-                user=request.user,
-                farm=farm,
-            ).values_list("pond_id", flat=True)
-            qs = qs.filter(id__in=pond_ids)
+        qs = _filter_ponds_for_operario(qs, request, farm)
 
         return Response(PondSerializer(qs, many=True).data)
 
@@ -61,7 +81,9 @@ class PondListCreateView(APIView):
 
 
 class PondAllowedListView(APIView):
-    permission_classes = [AdminOr(IsProductor)]
+
+    def get_permissions(self):
+        return [AdminOr(IsFarmMember)()]
 
     def get(self, request, farm_id):
         farm = _get_farm(farm_id)
@@ -69,19 +91,20 @@ class PondAllowedListView(APIView):
             return _farm_not_found_response()
 
         ponds = (
-            Pond.objects.filter(
-                farm=farm,
-                deleted_at__isnull=True,
-            )
+            Pond.objects.filter(farm=farm, deleted_at__isnull=True)
             .exclude(status=Pond.Status.INACTIVE)
             .order_by("-id")
         )
-
+        ponds = _filter_ponds_for_operario(ponds, request, farm)
         return Response(PondSerializer(ponds, many=True).data)
 
 
 class PondDetailView(APIView):
-    permission_classes = [PondDetailPermission]
+
+    def get_permissions(self):
+        if self.request.method in ("PATCH", "DELETE"):
+            return [AdminOr(CanManagePond)()]
+        return [AdminOr(IsFarmMember)()]
 
     def get(self, request, farm_id, pond_id):
         farm = _get_farm(farm_id)
@@ -90,9 +113,13 @@ class PondDetailView(APIView):
 
         pond = get_pond_or_404(farm, pond_id)
         if not pond:
-            return Response(
-                {"detail": "Estanque no encontrado."}, status=status.HTTP_404_NOT_FOUND
-            )
+            return _pond_not_found_response()
+
+        if request.user.role.name == "Operario":
+            if not UserFarmPond.objects.filter(
+                user=request.user, farm=farm, pond=pond
+            ).exists():
+                return _pond_forbidden_for_operario_response()
 
         return Response(PondSerializer(pond).data)
 
@@ -103,9 +130,7 @@ class PondDetailView(APIView):
 
         pond = get_pond_or_404(farm, pond_id)
         if not pond:
-            return Response(
-                {"detail": "Estanque no encontrado."}, status=status.HTTP_404_NOT_FOUND
-            )
+            return _pond_not_found_response()
 
         serializer = PondSerializer(
             pond,
@@ -124,16 +149,16 @@ class PondDetailView(APIView):
 
         pond = get_pond_or_404(farm, pond_id)
         if not pond:
-            return Response(
-                {"detail": "Estanque no encontrado."}, status=status.HTTP_404_NOT_FOUND
-            )
+            return _pond_not_found_response()
 
         soft_delete_pond(pond)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class PondMemberListView(APIView):
-    permission_classes = [AdminOr(IsProductor)]
+
+    def get_permissions(self):
+        return [AdminOr(CanManageFarmUsers)()]
 
     def get(self, request, farm_id):
         farm = _get_farm(farm_id)
@@ -147,7 +172,9 @@ class PondMemberListView(APIView):
 
 
 class PondMemberDetailView(APIView):
-    permission_classes = [AdminOr(IsProductor)]
+
+    def get_permissions(self):
+        return [AdminOr(CanManageFarmUsers)()]
 
     def get(self, request, farm_id, pond_id, user_id):
         farm = _get_farm(farm_id)
@@ -166,7 +193,6 @@ class PondMemberDetailView(APIView):
                 {"detail": "Operario no encontrado en este estanque."},
                 status=status.HTTP_404_NOT_FOUND,
             )
-
         return Response(UserFarmPondSerializer(member).data)
 
     def post(self, request, farm_id, pond_id, user_id):
@@ -207,5 +233,4 @@ class PondMemberDetailView(APIView):
                 {"detail": "Operario no encontrado en este estanque."},
                 status=status.HTTP_404_NOT_FOUND,
             )
-
         return Response(status=status.HTTP_204_NO_CONTENT)

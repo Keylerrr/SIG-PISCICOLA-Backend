@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from datetime import date
 
 from .models import ProductionPlan, Cycle, CycleBatch
 
@@ -25,12 +26,29 @@ class ProductionPlanSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["version", "is_current", "parent", "created_at", "updated_at"]
 
+    def validate(self, data):
+        expected_mortality_rate = data.get("expected_mortality_rate")
+        expected_final_weight = data.get("expected_final_weight")
+
+        if expected_mortality_rate is not None:
+            if not (0 <= expected_mortality_rate <= 100):
+                raise serializers.ValidationError({
+                    "expected_mortality_rate": "El porcentaje de mortalidad debe estar entre 0 y 100."
+                })
+
+        if expected_final_weight is not None and expected_final_weight <= 0:
+            raise serializers.ValidationError({
+                "expected_final_weight": "El peso final esperado debe ser mayor a 0."
+            })
+
+        return data
+
     def update(self, instance, validated_data):
         if not instance.is_current:
             raise serializers.ValidationError(
-                "Cannot update a plan that is not the current version."
+                "No se puede actualizar un plan que no es la versión actual."
             )
-        
+
         new_plan = ProductionPlan.objects.create(
             farm=instance.farm,
             specie=instance.specie,
@@ -50,10 +68,10 @@ class ProductionPlanSerializer(serializers.ModelSerializer):
             is_current=True,
             parent=instance,
         )
-        
+
         instance.is_current = False
         instance.save(update_fields=["is_current"])
-        
+
         return new_plan
 
 
@@ -81,6 +99,78 @@ class CycleSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["created_at", "updated_at"]
 
+    def validate(self, data):
+        pond = data.get("pond") or (self.instance.pond if self.instance else None)
+        farm = data.get("farm") or (self.instance.farm if self.instance else None)
+        specie = data.get("specie") or (self.instance.specie if self.instance else None)
+        production_plan = data.get("production_plan") or (self.instance.production_plan if self.instance else None)
+        state = data.get("state") or (self.instance.state if self.instance else None)
+        start_date = data.get("start_date") or (self.instance.start_date if self.instance else None)
+        estimated_finish_date = data.get("estimated_finish_date") or (self.instance.estimated_finish_date if self.instance else None)
+        finish_date = data.get("finish_date")
+
+        BLOCKED_STATUSES = ["inactive", "cleaning"]
+        if pond and pond.status in BLOCKED_STATUSES:
+            raise serializers.ValidationError(
+                f"No se puede crear ni editar un ciclo en un estanque con estado '{pond.get_status_display()}'."
+            )
+
+        if production_plan and farm and production_plan.farm_id != farm.id:
+            raise serializers.ValidationError({
+                "production_plan": "El plan de producción debe pertenecer a la misma granja."
+            })
+
+        if production_plan and specie and production_plan.specie_id != specie.id:
+            raise serializers.ValidationError({
+                "production_plan": "La especie del plan debe coincidir con la especie del ciclo."
+            })
+
+        if specie and farm and specie.farm_id != farm.id:
+            raise serializers.ValidationError({
+                "specie": "La especie debe pertenecer a la misma granja."
+            })
+
+        if state == Cycle.State.IN_PROGRESS:
+            ciclo_activo = Cycle.objects.filter(
+                pond=pond,
+                state=Cycle.State.IN_PROGRESS,
+                deleted_at__isnull=True
+            ).exclude(pk=self.instance.pk if self.instance else None).exists()
+
+            if ciclo_activo:
+                raise serializers.ValidationError(
+                    f"El estanque '{pond.name}' ya tiene un ciclo en progreso."
+                )
+
+        if start_date and estimated_finish_date:
+            if estimated_finish_date <= start_date:
+                raise serializers.ValidationError({
+                    "estimated_finish_date": "La fecha estimada de fin debe ser mayor a la fecha de inicio."
+                })
+
+        if finish_date and start_date and finish_date < start_date:
+            raise serializers.ValidationError({
+                "finish_date": "La fecha de fin debe ser mayor a la fecha de inicio."
+            })
+
+        if finish_date and estimated_finish_date and finish_date > estimated_finish_date:
+            raise serializers.ValidationError({
+                "finish_date": "La fecha de fin no puede ser mayor a la fecha estimada de fin."
+            })
+
+        if state == Cycle.State.FINISHED:
+            if not finish_date:
+                raise serializers.ValidationError({
+                    "finish_date": "La fecha de fin es obligatoria cuando el ciclo está terminado."
+                })
+
+        if finish_date and state not in [Cycle.State.FINISHED, Cycle.State.CANCELLED]:
+            raise serializers.ValidationError({
+                "finish_date": "La fecha de fin solo se puede registrar cuando el ciclo está terminado o cancelado."
+            })
+
+        return data
+
 
 class CycleBatchSerializer(serializers.ModelSerializer):
     class Meta:
@@ -94,3 +184,40 @@ class CycleBatchSerializer(serializers.ModelSerializer):
             "avg_weight_g",
             "max_weight_g",
         ]
+
+    def validate(self, data):
+        cycle = data.get("cycle")
+        pond_batch = data.get("pond_batch")
+        quantity = data.get("quantity")
+        min_weight = data.get("min_weight_g")
+        avg_weight = data.get("avg_weight_g")
+        max_weight = data.get("max_weight_g")
+
+        if quantity is not None and quantity <= 0:
+            raise serializers.ValidationError({
+                "quantity": "La cantidad debe ser mayor a 0."
+            })
+
+        if min_weight and avg_weight and max_weight:
+            if not (min_weight <= avg_weight <= max_weight):
+                raise serializers.ValidationError({
+                    "weights": "min_weight_g <= avg_weight_g <= max_weight_g debe cumplirse."
+                })
+
+        if cycle and cycle.state != Cycle.State.IN_PROGRESS:
+            raise serializers.ValidationError({
+                "cycle": "Solo se pueden agregar lotes a ciclos en progreso."
+            })
+
+        if cycle and pond_batch:
+            if pond_batch.batch.specie != cycle.specie:
+                raise serializers.ValidationError({
+                    "pond_batch": "La especie del lote no coincide con la especie del ciclo."
+                })
+
+            if pond_batch.batch.farm_id != cycle.farm_id:
+                raise serializers.ValidationError({
+                    "pond_batch": "El lote debe pertenecer a la misma granja del ciclo."
+                })
+
+        return data
