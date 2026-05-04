@@ -71,8 +71,11 @@ class SpeciePondTypeListCreateView(APIView):
         specie = _get_specie_or_404(specie_id)
         if not specie:
             return _specie_not_found_response()
-        pond_types = SpeciePondType.objects.filter(specie=specie).order_by("id")
-        return Response(SpeciePondTypeSerializer(pond_types, many=True).data)
+        qs = SpeciePondType.objects.filter(specie=specie)
+        pond_type = request.query_params.get("pond_type")
+        if pond_type:
+            qs = qs.filter(pond_type=pond_type)
+        return Response(SpeciePondTypeSerializer(qs.order_by("id"), many=True).data)
 
     def post(self, request, specie_id):
         specie = _get_specie_or_404(specie_id)
@@ -136,8 +139,11 @@ class SpecieParameterListCreateView(APIView):
         specie = _get_specie_or_404(specie_id)
         if not specie:
             return _specie_not_found_response()
-        parameters = SpecieParameter.objects.filter(specie=specie).order_by("id")
-        return Response(SpecieParameterSerializer(parameters, many=True).data)
+        qs = SpecieParameter.objects.filter(specie=specie)
+        parameter_type = request.query_params.get("parameter_type")
+        if parameter_type:
+            qs = qs.filter(parameter_type=parameter_type)
+        return Response(SpecieParameterSerializer(qs.order_by("id"), many=True).data)
 
     def post(self, request, specie_id):
         specie = _get_specie_or_404(specie_id)
@@ -199,8 +205,11 @@ class SpecieFeedingReferenceListCreateView(APIView):
         specie = _get_specie_or_404(specie_id)
         if not specie:
             return _specie_not_found_response()
-        refs = SpecieFeedingReference.objects.filter(specie=specie).order_by("id")
-        return Response(SpecieFeedingReferenceSerializer(refs, many=True).data)
+        qs = SpecieFeedingReference.objects.filter(specie=specie)
+        stage = request.query_params.get("stage")
+        if stage:
+            qs = qs.filter(stage=stage)
+        return Response(SpecieFeedingReferenceSerializer(qs.order_by("id"), many=True).data)
 
     def post(self, request, specie_id):
         specie = _get_specie_or_404(specie_id)
@@ -262,8 +271,11 @@ class SpecieProductionReferenceListCreateView(APIView):
         specie = _get_specie_or_404(specie_id)
         if not specie:
             return _specie_not_found_response()
-        refs = SpecieProductionReference.objects.filter(specie=specie).order_by("id")
-        return Response(SpecieProductionReferenceSerializer(refs, many=True).data)
+        qs = SpecieProductionReference.objects.filter(specie=specie)
+        ref_type = request.query_params.get("type")
+        if ref_type:
+            qs = qs.filter(type=ref_type)
+        return Response(SpecieProductionReferenceSerializer(qs.order_by("id"), many=True).data)
 
     def post(self, request, specie_id):
         specie = _get_specie_or_404(specie_id)
