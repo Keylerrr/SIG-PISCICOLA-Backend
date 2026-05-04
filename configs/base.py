@@ -29,6 +29,10 @@ INSTALLED_APPS = [
     "apps.accounts",
     "apps.farms",
     "apps.ponds",
+    "apps.batch",
+    "apps.cycle",
+    "apps.events",
+    "apps.species",
 ]
 
 MIDDLEWARE = [

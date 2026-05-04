@@ -1,0 +1,318 @@
+from rest_framework import status
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from .models import Specie, SpecieFeedingReference, SpecieParameter, SpeciePondType, SpecieProductionReference
+from .permissions import SpeciePermission
+from .serializers import (
+    SpecieFeedingReferenceSerializer,
+    SpecieParameterSerializer,
+    SpeciePondTypeSerializer,
+    SpecieProductionReferenceSerializer,
+    SpecieSerializer,
+)
+
+
+def _get_specie_or_404(specie_id):
+    try:
+        return Specie.objects.get(pk=specie_id)
+    except Specie.DoesNotExist:
+        return None
+
+
+def _specie_not_found_response():
+    return Response({"detail": "Especie no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+
+
+class SpecieListCreateView(APIView):
+    permission_classes = [SpeciePermission]
+
+    def get(self, request):
+        species = Specie.objects.order_by("name")
+        return Response(SpecieSerializer(species, many=True).data)
+
+    def post(self, request):
+        serializer = SpecieSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class SpecieDetailView(APIView):
+    permission_classes = [SpeciePermission]
+
+    def get(self, request, specie_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        return Response(SpecieSerializer(specie).data)
+
+    def patch(self, request, specie_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        serializer = SpecieSerializer(specie, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def delete(self, request, specie_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        specie.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SpeciePondTypeListCreateView(APIView):
+    permission_classes = [SpeciePermission]
+
+    def get(self, request, specie_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        pond_types = SpeciePondType.objects.filter(specie=specie).order_by("id")
+        return Response(SpeciePondTypeSerializer(pond_types, many=True).data)
+
+    def post(self, request, specie_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        serializer = SpeciePondTypeSerializer(
+            data=request.data, context={"specie": specie}
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save(specie=specie)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class SpeciePondTypeDetailView(APIView):
+    permission_classes = [SpeciePermission]
+
+    def _get_object(self, specie, pond_type_id):
+        try:
+            return SpeciePondType.objects.get(pk=pond_type_id, specie=specie)
+        except SpeciePondType.DoesNotExist:
+            return None
+
+    def get(self, request, specie_id, pond_type_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        obj = self._get_object(specie, pond_type_id)
+        if not obj:
+            return Response({"detail": "Tipo de estanque no encontrado."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(SpeciePondTypeSerializer(obj).data)
+
+    def patch(self, request, specie_id, pond_type_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        obj = self._get_object(specie, pond_type_id)
+        if not obj:
+            return Response({"detail": "Tipo de estanque no encontrado."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = SpeciePondTypeSerializer(
+            obj, data=request.data, partial=True, context={"specie": specie}
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def delete(self, request, specie_id, pond_type_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        obj = self._get_object(specie, pond_type_id)
+        if not obj:
+            return Response({"detail": "Tipo de estanque no encontrado."}, status=status.HTTP_404_NOT_FOUND)
+        obj.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SpecieParameterListCreateView(APIView):
+    permission_classes = [SpeciePermission]
+
+    def get(self, request, specie_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        parameters = SpecieParameter.objects.filter(specie=specie).order_by("id")
+        return Response(SpecieParameterSerializer(parameters, many=True).data)
+
+    def post(self, request, specie_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        serializer = SpecieParameterSerializer(
+            data=request.data, context={"specie": specie}
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save(specie=specie)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class SpecieParameterDetailView(APIView):
+    permission_classes = [SpeciePermission]
+
+    def _get_object(self, specie, parameter_id):
+        try:
+            return SpecieParameter.objects.get(pk=parameter_id, specie=specie)
+        except SpecieParameter.DoesNotExist:
+            return None
+
+    def get(self, request, specie_id, parameter_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        obj = self._get_object(specie, parameter_id)
+        if not obj:
+            return Response({"detail": "Parámetro no encontrado."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(SpecieParameterSerializer(obj).data)
+
+    def patch(self, request, specie_id, parameter_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        obj = self._get_object(specie, parameter_id)
+        if not obj:
+            return Response({"detail": "Parámetro no encontrado."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = SpecieParameterSerializer(obj, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def delete(self, request, specie_id, parameter_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        obj = self._get_object(specie, parameter_id)
+        if not obj:
+            return Response({"detail": "Parámetro no encontrado."}, status=status.HTTP_404_NOT_FOUND)
+        obj.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SpecieFeedingReferenceListCreateView(APIView):
+    permission_classes = [SpeciePermission]
+
+    def get(self, request, specie_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        refs = SpecieFeedingReference.objects.filter(specie=specie).order_by("id")
+        return Response(SpecieFeedingReferenceSerializer(refs, many=True).data)
+
+    def post(self, request, specie_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        serializer = SpecieFeedingReferenceSerializer(
+            data=request.data, context={"specie": specie}
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save(specie=specie)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class SpecieFeedingReferenceDetailView(APIView):
+    permission_classes = [SpeciePermission]
+
+    def _get_object(self, specie, ref_id):
+        try:
+            return SpecieFeedingReference.objects.get(pk=ref_id, specie=specie)
+        except SpecieFeedingReference.DoesNotExist:
+            return None
+
+    def get(self, request, specie_id, ref_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        obj = self._get_object(specie, ref_id)
+        if not obj:
+            return Response({"detail": "Referencia de alimentación no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(SpecieFeedingReferenceSerializer(obj).data)
+
+    def patch(self, request, specie_id, ref_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        obj = self._get_object(specie, ref_id)
+        if not obj:
+            return Response({"detail": "Referencia de alimentación no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = SpecieFeedingReferenceSerializer(obj, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def delete(self, request, specie_id, ref_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        obj = self._get_object(specie, ref_id)
+        if not obj:
+            return Response({"detail": "Referencia de alimentación no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+        obj.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SpecieProductionReferenceListCreateView(APIView):
+    permission_classes = [SpeciePermission]
+
+    def get(self, request, specie_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        refs = SpecieProductionReference.objects.filter(specie=specie).order_by("id")
+        return Response(SpecieProductionReferenceSerializer(refs, many=True).data)
+
+    def post(self, request, specie_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        serializer = SpecieProductionReferenceSerializer(
+            data=request.data, context={"specie": specie}
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save(specie=specie)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class SpecieProductionReferenceDetailView(APIView):
+    permission_classes = [SpeciePermission]
+
+    def _get_object(self, specie, ref_id):
+        try:
+            return SpecieProductionReference.objects.get(pk=ref_id, specie=specie)
+        except SpecieProductionReference.DoesNotExist:
+            return None
+
+    def get(self, request, specie_id, ref_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        obj = self._get_object(specie, ref_id)
+        if not obj:
+            return Response({"detail": "Referencia de producción no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(SpecieProductionReferenceSerializer(obj).data)
+
+    def patch(self, request, specie_id, ref_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        obj = self._get_object(specie, ref_id)
+        if not obj:
+            return Response({"detail": "Referencia de producción no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+        serializer = SpecieProductionReferenceSerializer(obj, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def delete(self, request, specie_id, ref_id):
+        specie = _get_specie_or_404(specie_id)
+        if not specie:
+            return _specie_not_found_response()
+        obj = self._get_object(specie, ref_id)
+        if not obj:
+            return Response({"detail": "Referencia de producción no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+        obj.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
