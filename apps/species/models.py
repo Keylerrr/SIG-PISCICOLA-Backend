@@ -111,13 +111,13 @@ class SpecieFeedingReference(models.Model):
         db_table = "specie_feeding_reference"
         constraints = [
             models.UniqueConstraint(
-                fields=["specie", "stage"],
-                name="uq_specie_feeding_reference_stage",
+                fields=["specie", "stage", "recommended_feed_form"],
+                name="uq_specie_feeding_reference_stage_feed_form",
             )
         ]
 
     def __str__(self):
-        return f"{self.specie} — {self.stage}"
+        return f"{self.specie} — {self.stage} — {self.recommended_feed_form}"
 
 
 class SpecieProductionReference(models.Model):

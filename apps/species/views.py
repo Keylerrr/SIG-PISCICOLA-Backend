@@ -209,6 +209,11 @@ class SpecieFeedingReferenceListCreateView(APIView):
         stage = request.query_params.get("stage")
         if stage:
             qs = qs.filter(stage=stage)
+        feed_form = request.query_params.get("feed_form") or request.query_params.get(
+            "recommended_feed_form"
+        )
+        if feed_form:
+            qs = qs.filter(recommended_feed_form=feed_form)
         return Response(SpecieFeedingReferenceSerializer(qs.order_by("id"), many=True).data)
 
     def post(self, request, specie_id):
