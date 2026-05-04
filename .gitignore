@@ -1,5 +1,6 @@
 docker/
 __pycache__/
+.vscode/
 *.py[cod]
 *$py.class
 *.so
