@@ -35,6 +35,17 @@ class ProductionPlanSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     f"No se puede crear ni editar un ciclo en un estanque con estado '{pond.get_status_display()}'."
                 )
+            
+            ciclo_activo = Cycle.objects.filter(
+                pond=pond,
+                state=Cycle.State.IN_PROGRESS,
+                deleted_at__isnull=True
+            ).exclude(pk=self.instance.pk if self.instance else None).exists()
+
+            if ciclo_activo:
+                raise serializers.ValidationError(
+                f"El estanque '{pond.name}' ya tiene un ciclo en progreso."
+           )
             return data
 
     def update(self, instance, validated_data):
