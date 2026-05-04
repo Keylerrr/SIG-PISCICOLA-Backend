@@ -45,7 +45,7 @@ class ProductionPlanSerializer(serializers.ModelSerializer):
             if ciclo_activo:
                 raise serializers.ValidationError(
                 f"El estanque '{pond.name}' ya tiene un ciclo en progreso."
-           )
+        )
             return data
 
     def update(self, instance, validated_data):
