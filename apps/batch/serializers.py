@@ -27,17 +27,15 @@ class BatchSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["code", "created_at", "updated_at"]
 
-
-
     def create(self, validated_data):
         farm = validated_data["farm"]
         timestamp = int(timezone.now().timestamp())
         code = f"BATCH-{farm.id}-{timestamp}"
-        
+
         while Batch.objects.filter(code=code, farm=farm).exists():
             timestamp += 1
             code = f"BATCH-{farm.id}-{timestamp}"
-        
+
         validated_data["code"] = code
         return super().create(validated_data)
 
@@ -46,12 +44,11 @@ class BatchSourceSerializer(serializers.ModelSerializer):
     class Meta:
         model = BatchSource
         fields = ["id", "parent_batch", "child_batch", "quantity"]
-        unique_together = ("parent_batch", "child_batch")
 
     def validate(self, data):
         if data["parent_batch"] == data["child_batch"]:
             raise serializers.ValidationError(
-                "A batch cannot be its own parent or child."
+                "Un lote no puede ser su propio padre o hijo."
             )
         return data
 
@@ -72,20 +69,39 @@ class PondBatchSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         pond = data.get("pond")
+        batch = data.get("batch")
         cantidad_nueva = data.get("initial_quantity", 0)
 
+        
+        if batch and batch.status != Batch.Status.ACTIVE:
+            raise serializers.ValidationError({
+                "batch": f"El lote no está activo. Estado actual: '{batch.get_status_display()}'."
+            })
+
+        
+        ya_asignado = PondBatch.objects.filter(
+            batch=batch,
+            end_date__isnull=True
+        ).exists()
+        if ya_asignado:
+            raise serializers.ValidationError({
+                "batch": "El lote ya está asignado a un estanque activo."
+            })
+
+        
         cantidad_actual = PondBatch.objects.filter(
             pond=pond,
             end_date__isnull=True
         ).aggregate(total=Sum("current_quantity"))["total"] or 0
 
         if cantidad_actual + cantidad_nueva > pond.capacity:
-            raise serializers.ValidationError(
-                f"El estanque '{pond.name}' supera su capacidad de "
-                f"{pond.capacity} peces. Disponible: {pond.capacity - cantidad_actual}."
-            )
+            raise serializers.ValidationError({
+                "initial_quantity": f"El estanque '{pond.name}' supera su capacidad de "
+                                    f"{pond.capacity} peces. Disponible: {pond.capacity - cantidad_actual}."
+            })
+
         return data
-    
+
     def create(self, validated_data):
         validated_data["current_quantity"] = validated_data["initial_quantity"]
         return super().create(validated_data)
@@ -110,9 +126,27 @@ class BatchTransferSerializer(serializers.ModelSerializer):
         quantity = data["quantity"]
 
         
+        if source.pond == destination.pond:
+            raise serializers.ValidationError({
+                "to_pond_batch": "El estanque origen y destino no pueden ser el mismo."
+            })
+
+        
+        if source.batch.status != Batch.Status.ACTIVE:
+            raise serializers.ValidationError({
+                "source_pond_batch": f"El lote no está activo. Estado actual: '{source.batch.get_status_display()}'."
+            })
+
+        
+        if source.batch.specie != destination.batch.specie:
+            raise serializers.ValidationError({
+                "to_pond_batch": "Los lotes deben ser de la misma especie para transferir."
+            })
+
+        
         if source.current_quantity < quantity:
             raise serializers.ValidationError({
-                "quantity": f"Cantidad insuficiente. Disponible: {source.current_quantity}"
+                "quantity": f"Cantidad insuficiente. Disponible: {source.current_quantity}."
             })
 
         
@@ -134,11 +168,11 @@ class BatchTransferSerializer(serializers.ModelSerializer):
         source = validated_data["source_pond_batch"]
         destination = validated_data["to_pond_batch"]
         quantity = validated_data["quantity"]
-        
+
         source.current_quantity -= quantity
         source.save(update_fields=["current_quantity"])
-        
+
         destination.current_quantity += quantity
         destination.save(update_fields=["current_quantity"])
-        
+
         return super().create(validated_data)
