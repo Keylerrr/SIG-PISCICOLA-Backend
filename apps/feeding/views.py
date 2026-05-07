@@ -7,8 +7,13 @@ from rest_framework.views import APIView
 from apps.accounts.permissions import AdminOr
 from apps.farms.permissions import CanManageCycle, IsFarmMember
 
-from .models import FeedingPlan, FeedingSchedule
-from .serializers import FeedingPlanSerializer, FeedingScheduleSerializer
+from .models import FeedingEvent, FeedingPlan, FeedingSchedule
+from .serializers import (
+    FeedingEventSerializer,
+    FeedingEventUpdateSerializer,
+    FeedingPlanSerializer,
+    FeedingScheduleSerializer,
+)
 
 
 def _get_farm(farm_id):
@@ -28,6 +33,13 @@ def _farm_not_found_response():
 def _plan_not_found_response():
     return Response(
         {"detail": "Plan de alimentación no encontrado."},
+        status=status.HTTP_404_NOT_FOUND,
+    )
+
+
+def _event_not_found_response():
+    return Response(
+        {"detail": "Evento de alimentación no encontrado."},
         status=status.HTTP_404_NOT_FOUND,
     )
 
@@ -189,3 +201,82 @@ class FeedingPlanDetailView(APIView):
         plan.deleted_at = timezone.now()
         plan.save(update_fields=["deleted_at"])
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class FeedingEventListView(APIView):
+
+    def get_permissions(self):
+        return [AdminOr(IsFarmMember)()]
+
+    def get(self, request, farm_id):
+        if not _get_farm(farm_id):
+            return _farm_not_found_response()
+        qs = FeedingEvent.objects.filter(
+            farm_id=farm_id,
+            feeding_plan__deleted_at__isnull=True,
+        ).select_related(
+            "cycle",
+            "feeding_plan",
+            "farm",
+            "planned_unit",
+            "actual_unit",
+            "completed_by",
+        )
+        plan_param = request.query_params.get("feeding_plan")
+        if plan_param is not None:
+            qs = qs.filter(feeding_plan_id=plan_param)
+        cycle_param = request.query_params.get("cycle")
+        if cycle_param is not None:
+            qs = qs.filter(cycle_id=cycle_param)
+        qs = qs.order_by("date", "scheduled_time", "ration_number")
+        return Response(FeedingEventSerializer(qs, many=True).data)
+
+
+class FeedingEventDetailView(APIView):
+
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [AdminOr(IsFarmMember)()]
+        return [AdminOr(CanManageCycle)()]
+
+    def _get_event(self, farm_id, event_id):
+        try:
+            return FeedingEvent.objects.select_related(
+                "cycle",
+                "feeding_plan",
+                "farm",
+                "planned_unit",
+                "actual_unit",
+                "completed_by",
+            ).get(
+                pk=event_id,
+                farm_id=farm_id,
+                feeding_plan__deleted_at__isnull=True,
+            )
+        except FeedingEvent.DoesNotExist:
+            return None
+
+    def get(self, request, farm_id, event_id):
+        if not _get_farm(farm_id):
+            return _farm_not_found_response()
+        event = self._get_event(farm_id, event_id)
+        if not event:
+            return _event_not_found_response()
+        return Response(FeedingEventSerializer(event).data)
+
+    def patch(self, request, farm_id, event_id):
+        if not _get_farm(farm_id):
+            return _farm_not_found_response()
+        event = self._get_event(farm_id, event_id)
+        if not event:
+            return _event_not_found_response()
+        serializer = FeedingEventUpdateSerializer(
+            event,
+            data=request.data,
+            partial=True,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        event.refresh_from_db()
+        return Response(FeedingEventSerializer(event).data)

@@ -1,11 +1,19 @@
+from django.db import transaction
+from django.utils import timezone
 from rest_framework import serializers
 
 from apps.cycle.models import Cycle
 from apps.products.models import Product
 from apps.species.models import SpecieFeedingReference
 
-from .constants import FEED_SCHEDULE_PRODUCT_TYPE_NAMES
-from .models import FeedingPlan, FeedingSchedule
+from .constants import (
+    FEED_SCHEDULE_PRODUCT_TYPE_NAMES,
+    FEEDING_WORKDAY_END_HOUR,
+    FEEDING_WORKDAY_START_HOUR,
+    feeding_work_window_minutes,
+)
+from .models import FeedingEvent, FeedingPlan, FeedingSchedule
+from .utils import create_feeding_events_for_plan
 
 
 class FeedingScheduleSerializer(serializers.ModelSerializer):
@@ -128,6 +136,32 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
                     )
                 }
             )
+
+        times_pd = data.get(
+            "times_per_day",
+            getattr(instance, "times_per_day", None),
+        )
+        gap_min = data.get(
+            "gap_between_times_per_day",
+            getattr(instance, "gap_between_times_per_day", None),
+        )
+        if times_pd is not None and gap_min is not None and times_pd > 1:
+            window = feeding_work_window_minutes()
+            total_span = (times_pd - 1) * gap_min
+            if total_span > window:
+                max_gap = window // (times_pd - 1)
+                raise serializers.ValidationError(
+                    {
+                        "gap_between_times_per_day": (
+                            f"Con la jornada en campo ({FEEDING_WORKDAY_START_HOUR:02d}:00–"
+                            f"{FEEDING_WORKDAY_END_HOUR:02d}:00), {times_pd} raciones por día "
+                            f"no caben con {gap_min} minutos entre consecutivas: de la primera "
+                            f"a la última serían {total_span} minutos y el máximo en ventana es "
+                            f"{window}. Con esta frecuencia, el intervalo no debe superar "
+                            f"{max_gap} minutos."
+                        )
+                    }
+                )
 
         farm = self.context.get("farm")
         farm_id = getattr(farm, "pk", farm) if farm is not None else None
@@ -377,4 +411,141 @@ class FeedingPlanSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         validated_data["farm"] = self.context["farm"]
-        return super().create(validated_data)
+        with transaction.atomic():
+            plan = super().create(validated_data)
+            create_feeding_events_for_plan(plan)
+        return plan
+
+
+class FeedingEventSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FeedingEvent
+        fields = [
+            "id",
+            "farm",
+            "cycle",
+            "feeding_plan",
+            "date",
+            "scheduled_time",
+            "ration_number",
+            "planned_quantity",
+            "planned_unit",
+            "status",
+            "completed_at",
+            "actual_quantity",
+            "actual_unit",
+            "created_at",
+            "updated_at",
+            "completed_by",
+        ]
+        read_only_fields = fields
+
+
+class FeedingEventUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FeedingEvent
+        fields = [
+            "date",
+            "scheduled_time",
+            "status",
+            "actual_quantity",
+            "actual_unit",
+        ]
+
+    def validate(self, data):
+        instance = self.instance
+        if instance.status != FeedingEvent.Status.SCHEDULED:
+            raise serializers.ValidationError(
+                "Solo se pueden actualizar eventos en estado programado."
+            )
+
+        wants_close = "status" in data
+        wants_reschedule = "date" in data or "scheduled_time" in data
+
+        if not wants_close and not wants_reschedule:
+            raise serializers.ValidationError(
+                "Indique status (completed o skipped) para cerrar el evento, "
+                "o date y/o scheduled_time para reprogramar."
+            )
+
+        if wants_reschedule:
+            plan = instance.feeding_plan
+            effective_date = data.get("date", instance.date)
+            if effective_date < plan.start_date or effective_date > plan.end_date:
+                raise serializers.ValidationError(
+                    {
+                        "date": (
+                            "La fecha debe estar entre el inicio y el fin del plan "
+                            "de alimentación."
+                        )
+                    }
+                )
+
+        if wants_close:
+            new_status = data["status"]
+            if new_status == FeedingEvent.Status.SCHEDULED:
+                raise serializers.ValidationError(
+                    {
+                        "status": (
+                            "El evento ya está programado. "
+                            "Para reprogramar omita status y envíe date y/o scheduled_time."
+                        )
+                    }
+                )
+            if new_status not in (
+                FeedingEvent.Status.COMPLETED,
+                FeedingEvent.Status.SKIPPED,
+            ):
+                raise serializers.ValidationError(
+                    {"status": "Solo se admite completar u omitir el evento."}
+                )
+            if new_status == FeedingEvent.Status.COMPLETED:
+                aq = data.get("actual_quantity", instance.actual_quantity)
+                if aq is None:
+                    raise serializers.ValidationError(
+                        {
+                            "actual_quantity": (
+                                "Indique la cantidad real al completar el evento."
+                            )
+                        }
+                    )
+                if "actual_unit" not in data:
+                    raise serializers.ValidationError(
+                        {
+                            "actual_unit": (
+                                "Indique la unidad de la cantidad real al completar el evento."
+                            )
+                        }
+                    )
+        return data
+
+    def update(self, instance, validated_data):
+        request = self.context.get("request")
+        user = (
+            request.user
+            if request and getattr(request.user, "is_authenticated", False)
+            else None
+        )
+
+        if "date" in validated_data:
+            instance.date = validated_data["date"]
+        if "scheduled_time" in validated_data:
+            instance.scheduled_time = validated_data["scheduled_time"]
+
+        if "status" in validated_data:
+            new_status = validated_data["status"]
+            instance.status = new_status
+            if "actual_quantity" in validated_data:
+                instance.actual_quantity = validated_data["actual_quantity"]
+            if "actual_unit" in validated_data:
+                instance.actual_unit = validated_data["actual_unit"]
+            if new_status in (
+                FeedingEvent.Status.COMPLETED,
+                FeedingEvent.Status.SKIPPED,
+            ):
+                instance.completed_at = timezone.now()
+                if user is not None:
+                    instance.completed_by = user
+
+        instance.save()
+        return instance
