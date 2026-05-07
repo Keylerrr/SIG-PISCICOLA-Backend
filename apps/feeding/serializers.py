@@ -3,6 +3,7 @@ from rest_framework import serializers
 from apps.products.models import Product
 from apps.species.models import SpecieFeedingReference
 
+from .constants import FEED_SCHEDULE_PRODUCT_TYPE_NAMES
 from .models import FeedingSchedule
 
 
@@ -137,7 +138,9 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
 
         if farm_id is not None and product_id is not None:
             try:
-                product = Product.objects.get(pk=product_id)
+                product = Product.objects.select_related("type_product").get(
+                    pk=product_id
+                )
             except Product.DoesNotExist:
                 raise serializers.ValidationError(
                     {"product": "Producto no encontrado."}
@@ -154,6 +157,17 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
                         )
                     }
                 )
+            tname = (product.type_product.name or "").casefold()
+            if not any(tname == a.casefold() 
+                for a in FEED_SCHEDULE_PRODUCT_TYPE_NAMES):
+                    raise serializers.ValidationError(
+                        {
+                            "product": (
+                                "El tipo de producto debe ser de alimentación permitida "
+                                "para cronogramas."
+                            ),
+                        }
+                    )
 
         return data
 
