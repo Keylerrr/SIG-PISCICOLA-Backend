@@ -3,8 +3,10 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from apps.accounts.permissions import AdminOr
+from apps.farms.permissions import IsFarmMember
 from .models import Batch, BatchTransfer, PondBatch
-from .permissions import BatchPermission
+from .permissions import CanManageBatch
 from .serializers import (
     BatchSerializer,
     BatchTransferSerializer,
@@ -13,8 +15,12 @@ from .serializers import (
 
 
 class BatchViewSet(viewsets.ModelViewSet):
-    permission_classes = [BatchPermission]
     serializer_class = BatchSerializer
+
+    def get_permissions(self):
+        if self.request.method in ("POST", "PATCH"):
+            return [AdminOr(CanManageBatch)()]
+        return [AdminOr(IsFarmMember)()]
 
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")
@@ -47,8 +53,12 @@ class BatchViewSet(viewsets.ModelViewSet):
 
 
 class PondBatchViewSet(viewsets.ModelViewSet):
-    permission_classes = [BatchPermission]
     serializer_class = PondBatchSerializer
+
+    def get_permissions(self):
+        if self.request.method in ("POST", "PATCH"):
+            return [AdminOr(CanManageBatch)()]
+        return [AdminOr(IsFarmMember)()]
 
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")
@@ -61,7 +71,10 @@ class PondBatchViewSet(viewsets.ModelViewSet):
 
 
 class BatchTransferViewSet(viewsets.ViewSet):
-    permission_classes = [BatchPermission]
+    def get_permissions(self):
+        if self.request.method in ("POST", "PATCH"):
+            return [AdminOr(CanManageBatch)()]
+        return [AdminOr(IsFarmMember)()]
 
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")

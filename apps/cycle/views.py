@@ -2,8 +2,9 @@ from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.response import Response
 
+from apps.accounts.permissions import AdminOr
+from apps.farms.permissions import IsFarmMember, CanManageCycle
 from .models import Cycle, CycleBatch, ProductionPlan
-from .permissions import CyclePermission
 from .serializers import (
     CycleBatchSerializer,
     CycleSerializer,
@@ -12,8 +13,12 @@ from .serializers import (
 
 
 class ProductionPlanViewSet(viewsets.ModelViewSet):
-    permission_classes = [CyclePermission]
     serializer_class = ProductionPlanSerializer
+
+    def get_permissions(self):
+        if self.request.method in ("POST", "PATCH", "DELETE"):
+            return [AdminOr(CanManageCycle)()]
+        return [AdminOr(IsFarmMember)()]
 
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")
@@ -34,8 +39,12 @@ class ProductionPlanViewSet(viewsets.ModelViewSet):
 
 
 class CycleViewSet(viewsets.ModelViewSet):
-    permission_classes = [CyclePermission]
     serializer_class = CycleSerializer
+
+    def get_permissions(self):
+        if self.request.method in ("POST", "PATCH", "DELETE"):
+            return [AdminOr(CanManageCycle)()]
+        return [AdminOr(IsFarmMember)()]
 
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")
@@ -56,8 +65,12 @@ class CycleViewSet(viewsets.ModelViewSet):
 
 
 class CycleBatchViewSet(viewsets.ModelViewSet):
-    permission_classes = [CyclePermission]
     serializer_class = CycleBatchSerializer
+
+    def get_permissions(self):
+        if self.request.method in ("POST", "PATCH", "DELETE"):
+            return [AdminOr(CanManageCycle)()]
+        return [AdminOr(IsFarmMember)()]
 
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")
