@@ -3,6 +3,7 @@ from rest_framework import status, viewsets
 from rest_framework.response import Response
 
 from .models import Cycle, CycleBatch, ProductionPlan
+from .permissions import CyclePermission
 from .serializers import (
     CycleBatchSerializer,
     CycleSerializer,
@@ -11,6 +12,7 @@ from .serializers import (
 
 
 class ProductionPlanViewSet(viewsets.ModelViewSet):
+    permission_classes = [CyclePermission]
     serializer_class = ProductionPlanSerializer
 
     def get_queryset(self):
@@ -32,6 +34,7 @@ class ProductionPlanViewSet(viewsets.ModelViewSet):
 
 
 class CycleViewSet(viewsets.ModelViewSet):
+    permission_classes = [CyclePermission]
     serializer_class = CycleSerializer
 
     def get_queryset(self):
@@ -53,6 +56,7 @@ class CycleViewSet(viewsets.ModelViewSet):
 
 
 class CycleBatchViewSet(viewsets.ModelViewSet):
+    permission_classes = [CyclePermission]
     serializer_class = CycleBatchSerializer
 
     def get_queryset(self):

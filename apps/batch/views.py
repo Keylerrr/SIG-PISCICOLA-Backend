@@ -4,6 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from .models import Batch, BatchTransfer, PondBatch
+from .permissions import BatchPermission
 from .serializers import (
     BatchSerializer,
     BatchTransferSerializer,
@@ -12,6 +13,7 @@ from .serializers import (
 
 
 class BatchViewSet(viewsets.ModelViewSet):
+    permission_classes = [BatchPermission]
     serializer_class = BatchSerializer
 
     def get_queryset(self):
@@ -45,6 +47,7 @@ class BatchViewSet(viewsets.ModelViewSet):
 
 
 class PondBatchViewSet(viewsets.ModelViewSet):
+    permission_classes = [BatchPermission]
     serializer_class = PondBatchSerializer
 
     def get_queryset(self):
@@ -58,6 +61,8 @@ class PondBatchViewSet(viewsets.ModelViewSet):
 
 
 class BatchTransferViewSet(viewsets.ViewSet):
+    permission_classes = [BatchPermission]
+
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")
         return BatchTransfer.objects.filter(farm_id=farm_id).select_related(

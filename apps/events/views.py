@@ -2,10 +2,13 @@ from rest_framework import status, viewsets
 from rest_framework.response import Response
 
 from .models import GradingEvent
+from .permissions import EventPermission
 from .serializers import GradingEventSerializer
 
 
 class GradingEventViewSet(viewsets.ViewSet):
+    permission_classes = [EventPermission]
+
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")
         return GradingEvent.objects.filter(
