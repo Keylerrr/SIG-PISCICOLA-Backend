@@ -1,10 +1,11 @@
 from rest_framework import serializers
 
+from apps.cycle.models import Cycle
 from apps.products.models import Product
 from apps.species.models import SpecieFeedingReference
 
 from .constants import FEED_SCHEDULE_PRODUCT_TYPE_NAMES
-from .models import FeedingSchedule
+from .models import FeedingPlan, FeedingSchedule
 
 
 class FeedingScheduleSerializer(serializers.ModelSerializer):
@@ -263,3 +264,117 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
         if obj.pk is None:
             return {}
         return self.reference_warnings(obj)
+
+
+class FeedingPlanSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = FeedingPlan
+        fields = [
+            "id",
+            "farm",
+            "cycle",
+            "feeding_schedule",
+            "start_date",
+            "end_date",
+            "created_at",
+            "deleted_at",
+        ]
+        read_only_fields = ["farm", "created_at", "deleted_at"]
+
+    def validate(self, data):
+        farm = self.context.get("farm")
+        farm_id = getattr(farm, "pk", farm) if farm is not None else None
+        if farm_id is None:
+            raise serializers.ValidationError(
+                {"farm": "Contexto de granja requerido para crear el plan."}
+            )
+
+        raw_cycle = data.get("cycle")
+        raw_schedule = data.get("feeding_schedule")
+        cycle_pk = getattr(raw_cycle, "pk", raw_cycle)
+        schedule_pk = getattr(raw_schedule, "pk", raw_schedule)
+
+        try:
+            cycle = Cycle.objects.select_related("farm", "specie").get(pk=cycle_pk)
+        except Cycle.DoesNotExist:
+            raise serializers.ValidationError({"cycle": "Ciclo no encontrado."})
+
+        try:
+            schedule = FeedingSchedule.objects.select_related("farm", "specie").get(
+                pk=schedule_pk,
+                deleted_at__isnull=True,
+            )
+        except FeedingSchedule.DoesNotExist:
+            raise serializers.ValidationError(
+                {"feeding_schedule": "Cronograma no encontrado o no disponible."}
+            )
+
+        if cycle.deleted_at:
+            raise serializers.ValidationError(
+                {"cycle": "El ciclo no está disponible."}
+            )
+        if cycle.farm_id != farm_id:
+            raise serializers.ValidationError(
+                {"cycle": "El ciclo debe pertenecer a la misma granja."}
+            )
+        if schedule.farm_id != farm_id:
+            raise serializers.ValidationError(
+                {
+                    "feeding_schedule": (
+                        "El cronograma debe pertenecer a la misma granja."
+                    )
+                }
+            )
+        if cycle.specie_id != schedule.specie_id:
+            raise serializers.ValidationError(
+                {
+                    "feeding_schedule": (
+                        "La especie del cronograma debe coincidir con la del ciclo."
+                    )
+                }
+            )
+        if cycle.state in (Cycle.State.FINISHED, Cycle.State.CANCELLED):
+            raise serializers.ValidationError(
+                {
+                    "cycle": (
+                        "No se puede asociar un plan a un ciclo finalizado o cancelado."
+                    )
+                }
+            )
+
+        start = data["start_date"]
+        end = data["end_date"]
+        if start > end:
+            raise serializers.ValidationError(
+                {"end_date": "La fecha de fin debe ser mayor o igual al inicio."}
+            )
+        if start < cycle.start_date:
+            raise serializers.ValidationError(
+                {
+                    "start_date": (
+                        "El inicio del plan no puede ser anterior al inicio del ciclo."
+                    )
+                }
+            )
+        if end > cycle.estimated_finish_date:
+            raise serializers.ValidationError(
+                {
+                    "end_date": (
+                        "La fecha de fin no puede superar la fecha estimada de fin del ciclo."
+                    )
+                }
+            )
+        if cycle.finish_date and end > cycle.finish_date:
+            raise serializers.ValidationError(
+                {
+                    "end_date": (
+                        "La fecha de fin no puede superar la fecha de cierre del ciclo."
+                    )
+                }
+            )
+
+        return data
+
+    def create(self, validated_data):
+        validated_data["farm"] = self.context["farm"]
+        return super().create(validated_data)

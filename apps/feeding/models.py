@@ -58,3 +58,28 @@ class FeedingSchedule(models.Model):
 
     def __str__(self):
         return f"{self.name} v{self.version} — {self.farm}"
+
+
+class FeedingPlan(models.Model):
+    farm = models.ForeignKey(
+        "farms.Farm", on_delete=models.CASCADE, related_name="feeding_plans"
+    )
+    cycle = models.ForeignKey(
+        "cycle.Cycle", on_delete=models.PROTECT, related_name="feeding_plans"
+    )
+    feeding_schedule = models.ForeignKey(
+        FeedingSchedule,
+        on_delete=models.PROTECT,
+        related_name="feeding_plans",
+    )
+    start_date = models.DateField()
+    end_date = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    deleted_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "feeding_plan"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Plan ciclo {self.cycle_id} — {self.start_date} → {self.end_date}"
