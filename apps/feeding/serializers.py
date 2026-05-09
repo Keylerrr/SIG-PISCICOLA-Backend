@@ -134,9 +134,9 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
         return value
 
     def validate_gap_between_completed_day(self, value):
-        if value < 1:
+        if value < 0:
             raise serializers.ValidationError(
-                "El intervalo entre jornadas debe ser de al menos 1 día."
+                "El intervalo entre jornadas no puede ser negativo. Use 0 para alimentar todos los días."
             )
         return value
 
@@ -406,7 +406,20 @@ class FeedingPlanSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         validated_data["farm"] = self.context["farm"]
+        cycle = validated_data["cycle"]
         with transaction.atomic():
+            Cycle.objects.select_for_update().get(pk=cycle.pk)
+            if FeedingPlan.objects.filter(
+                cycle=cycle,
+                deleted_at__isnull=True,
+            ).exists():
+                raise serializers.ValidationError(
+                    {
+                        "cycle": (
+                            "Ya existe un plan de alimentación vigente para este ciclo."
+                        )
+                    }
+                )
             plan = super().create(validated_data)
             create_feeding_events_for_plan(plan)
         return plan

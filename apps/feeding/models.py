@@ -36,7 +36,7 @@ class FeedingSchedule(models.Model):
         help_text="Minutos entre raciones del mismo día"
     )
     gap_between_completed_day = models.PositiveIntegerField(
-        help_text="Días entre jornadas de alimentación"
+        help_text="Días entre jornadas de alimentación (0 = todos los días; 1 = día sí día no; etc.)."
     )
     expected_fca = models.DecimalField(max_digits=5, decimal_places=2)
     expected_daily_gain_g = models.DecimalField(max_digits=8, decimal_places=2)
