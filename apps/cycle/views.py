@@ -51,7 +51,7 @@ class CycleViewSet(viewsets.ModelViewSet):
         return Cycle.objects.filter(
             farm_id=farm_id,
             deleted_at__isnull=True,
-        ).select_related("production_plan", "pond").order_by("-start_date")
+        ).select_related("production_plan").order_by("-start_date")
 
     def perform_create(self, serializer):
         farm_id = self.kwargs.get("farm_pk")
