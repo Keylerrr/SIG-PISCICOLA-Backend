@@ -101,6 +101,11 @@ class PondBatchSerializer(serializers.ModelSerializer):
         start_date = data.get("start_date")
         end_date = data.get("end_date")
 
+        if pond and pond.deleted_at is not None:
+            raise serializers.ValidationError({
+                "pond": "El estanque ha sido eliminado y no está disponible."
+            })
+
         if batch and batch.status != Batch.Status.ACTIVE:
             raise serializers.ValidationError({
                 "batch": f"El lote no está activo. Estado actual: '{batch.get_status_display()}'."
