@@ -119,11 +119,6 @@ class CycleSerializer(serializers.ModelSerializer):
                 "production_plan": "La especie del plan debe coincidir con la especie del ciclo."
             })
 
-        if specie and farm and specie.farm_id != farm.id:
-            raise serializers.ValidationError({
-                "specie": "La especie debe pertenecer a la misma granja."
-            })
-
         if state == Cycle.State.IN_PROGRESS:
             ciclo_activo = Cycle.objects.filter(
                 farm=farm,
