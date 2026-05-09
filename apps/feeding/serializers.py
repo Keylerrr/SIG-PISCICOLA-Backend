@@ -91,6 +91,49 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
             "warnings",
         ]
 
+    _SCHEDULE_PATCH_FORBIDDEN = {
+        "name": "El nombre se hereda del cronograma anterior; no se puede enviar al versionar.",
+        "product": (
+            "El producto se hereda del cronograma anterior; para otro alimento cree un "
+            "cronograma nuevo (POST)."
+        ),
+        "specie": (
+            "La especie se hereda del cronograma anterior; para otra especie cree un "
+            "cronograma nuevo (POST)."
+        ),
+        "parent": (
+            "No envíe parent: la nueva versión queda automáticamente ligada al "
+            "cronograma que está actualizando."
+        ),
+        "version": "La versión la asigna el servidor al crear la nueva fila.",
+        "is_current": (
+            "La marca de versión vigente la define el sistema al crear la nueva versión."
+        ),
+    }
+
+    _SCHEDULE_VERSION_MERGE_FIELDS = (
+        "comments",
+        "type",
+        "aceptable_min_weight_g",
+        "aceptable_max_weight_g",
+        "feed_form",
+        "pellet_size_mm",
+        "feeding_rate_percentage",
+        "times_per_day",
+        "gap_between_times_per_day",
+        "gap_between_completed_day",
+        "expected_fca",
+        "expected_daily_gain_g",
+    )
+
+    def validate_name(self, value):
+        text = (value or "").strip()
+        if not text:
+            raise serializers.ValidationError(
+                "El nombre no puede estar vacío ni ser solo espacios."
+            )
+        return text
+
     def validate_aceptable_min_weight_g(self, value):
         if value <= 0:
             raise serializers.ValidationError(
@@ -156,6 +199,20 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         instance = self.instance
+        if instance is not None:
+            for field, message in self._SCHEDULE_PATCH_FORBIDDEN.items():
+                if field in data:
+                    raise serializers.ValidationError({field: message})
+        if instance is None and data.get("parent") is not None:
+            raise serializers.ValidationError(
+                {
+                    "parent": (
+                        "Al crear un cronograma nuevo no debe enviar parent. "
+                        "Para publicar una nueva versión, use el flujo de actualización "
+                        "del cronograma vigente que desea sustituir."
+                    ),
+                }
+            )
         min_w = data.get(
             "aceptable_min_weight_g",
             getattr(instance, "aceptable_min_weight_g", None),
@@ -238,7 +295,64 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
                         }
                     )
 
+        if farm_id is not None:
+            if instance is None:
+                schedule_name = data.get("name")
+                if schedule_name is not None and data.get("parent") is None:
+                    if FeedingSchedule.objects.filter(
+                        farm_id=farm_id,
+                        name__iexact=str(schedule_name),
+                        is_current=True,
+                    ).exists():
+                        raise serializers.ValidationError(
+                            {
+                                "name": (
+                                    "Ya existe un cronograma vigente con este nombre "
+                                    "en la granja."
+                                ),
+                            }
+                        )
+
         return data
+
+    def update(self, instance, validated_data):
+        with transaction.atomic():
+            old = (
+                FeedingSchedule.objects.select_for_update()
+                .select_related("farm", "product", "specie", "parent")
+                .get(pk=instance.pk)
+            )
+            if old.deleted_at is not None:
+                raise serializers.ValidationError(
+                    {"non_field_errors": ["El cronograma no está disponible."]}
+                )
+            if not old.is_current:
+                raise serializers.ValidationError(
+                    {
+                        "non_field_errors": [
+                            "Solo puede versionar el cronograma vigente (is_current). "
+                            "Use el último registro de la cadena."
+                        ],
+                    }
+                )
+            create_kwargs = {
+                "farm_id": old.farm_id,
+                "name": old.name,
+                "parent_id": old.pk,
+                "version": old.version + 1,
+                "is_current": True,
+                "product_id": old.product_id,
+                "specie_id": old.specie_id,
+            }
+            for f in self._SCHEDULE_VERSION_MERGE_FIELDS:
+                create_kwargs[f] = (
+                    validated_data[f] if f in validated_data else getattr(old, f)
+                )
+            new_obj = FeedingSchedule.objects.create(**create_kwargs)
+            old.is_current = False
+            old.deleted_at = timezone.now()
+            old.save(update_fields=["is_current", "deleted_at"])
+        return new_obj
 
     @staticmethod
     def reference_warnings(schedule: FeedingSchedule) -> dict[str, str]:

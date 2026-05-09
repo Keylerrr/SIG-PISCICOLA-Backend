@@ -125,7 +125,7 @@ class FeedingScheduleDetailView(APIView):
         instance = serializer.save()
         data = dict(FeedingScheduleSerializer(instance).data)
         data["warnings"] = FeedingScheduleSerializer.reference_warnings(instance)
-        return Response(data)
+        return Response(data, status=status.HTTP_201_CREATED)
 
     def delete(self, request, farm_id, schedule_id):
         if not _get_farm(farm_id):
