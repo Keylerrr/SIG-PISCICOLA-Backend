@@ -4,7 +4,7 @@ from .base import *
 
 SECRET_KEY = os.getenv("SECRET_KEY", SECRET_KEY or "django-insecure-dev-only")
 DEBUG = os.getenv("DEBUG", "True") == "True"
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1,backend-pongase-trucha.onrender.com").split(",")
 CORS_ALLOW_ALL_ORIGINS = os.getenv("CORS_ALLOW_ALL_ORIGINS", "True") == "True"
 HOST_URL = os.getenv("HOST_URL", "http://localhost:8000")
 
