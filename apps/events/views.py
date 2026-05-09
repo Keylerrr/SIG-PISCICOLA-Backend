@@ -1,11 +1,19 @@
 from rest_framework import status, viewsets
 from rest_framework.response import Response
 
+from apps.accounts.permissions import AdminOr
+from apps.farms.permissions import IsFarmMember
 from .models import GradingEvent
+from .permissions import CanManageEvent
 from .serializers import GradingEventSerializer
 
 
 class GradingEventViewSet(viewsets.ViewSet):
+    def get_permissions(self):
+        if self.request.method in ("POST", "PATCH"):
+            return [AdminOr(CanManageEvent)()]
+        return [AdminOr(IsFarmMember)()]
+
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")
         return GradingEvent.objects.filter(
