@@ -149,9 +149,11 @@ class FeedingPlanListCreateView(APIView):
         farm = _get_farm(farm_id)
         if not farm:
             return _farm_not_found_response()
-        qs = FeedingPlan.objects.filter(
-            farm_id=farm_id, deleted_at__isnull=True
-        ).select_related("cycle", "feeding_schedule", "farm")
+        qs = FeedingPlan.objects.filter(farm_id=farm_id).select_related(
+            "cycle", "feeding_schedule", "farm"
+        )
+        if not AdminOr(CanManageCycle)().has_permission(request, self):
+            qs = qs.filter(deleted_at__isnull=True)
         cycle_param = request.query_params.get("cycle")
         if cycle_param is not None:
             qs = qs.filter(cycle_id=cycle_param)
@@ -194,6 +196,10 @@ class FeedingPlanDetailView(APIView):
             return _farm_not_found_response()
         plan = self._get_plan(farm_id, plan_id, current_only=False)
         if not plan:
+            return _plan_not_found_response()
+        if plan.deleted_at is not None and not AdminOr(CanManageCycle)().has_permission(
+            request, self
+        ):
             return _plan_not_found_response()
         return Response(FeedingPlanSerializer(plan).data)
 
@@ -253,6 +259,8 @@ class FeedingEventListView(APIView):
             "actual_unit",
             "completed_by",
         )
+        if not AdminOr(CanManageCycle)().has_permission(request, self):
+            qs = qs.filter(feeding_plan__deleted_at__isnull=True)
         plan_param = request.query_params.get("feeding_plan")
         if plan_param is not None:
             qs = qs.filter(feeding_plan_id=plan_param)
@@ -292,6 +300,12 @@ class FeedingEventDetailView(APIView):
         event = self._get_event(farm_id, event_id)
         if not event:
             return _event_not_found_response()
+        if (
+            event.feeding_plan_id
+            and event.feeding_plan.deleted_at is not None
+            and not AdminOr(CanManageCycle)().has_permission(request, self)
+        ):
+            return _event_not_found_response()
         return Response(FeedingEventSerializer(event).data)
 
     def patch(self, request, farm_id, event_id):
@@ -299,6 +313,12 @@ class FeedingEventDetailView(APIView):
             return _farm_not_found_response()
         event = self._get_event(farm_id, event_id)
         if not event:
+            return _event_not_found_response()
+        if (
+            event.feeding_plan_id
+            and event.feeding_plan.deleted_at is not None
+            and not AdminOr(CanManageCycle)().has_permission(request, self)
+        ):
             return _event_not_found_response()
         serializer = FeedingEventUpdateSerializer(
             event,
