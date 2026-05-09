@@ -192,6 +192,11 @@ class BatchTransferSerializer(serializers.ModelSerializer):
                 "to_pond_batch": "Los lotes deben ser de la misma especie para transferir."
             })
 
+        if source.batch.biological_state != destination.batch.biological_state:
+            raise serializers.ValidationError({
+                "to_pond_batch": "Los lotes deben tener el mismo estado biológico para transferir."
+            })
+
         if source.current_quantity < quantity:
             raise serializers.ValidationError({
                 "quantity": f"Cantidad insuficiente. Disponible: {source.current_quantity}."

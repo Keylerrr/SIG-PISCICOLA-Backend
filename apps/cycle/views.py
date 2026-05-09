@@ -4,9 +4,9 @@ from rest_framework.response import Response
 
 from apps.accounts.permissions import AdminOr
 from apps.farms.permissions import IsFarmMember, CanManageCycle
-from .models import Cycle, CycleBatch, ProductionPlan
+from .models import Cycle, CyclePondBatch, ProductionPlan
 from .serializers import (
-    CycleBatchSerializer,
+    CyclePondBatchSerializer,
     CycleSerializer,
     ProductionPlanSerializer,
 )
@@ -51,7 +51,7 @@ class CycleViewSet(viewsets.ModelViewSet):
         return Cycle.objects.filter(
             farm_id=farm_id,
             deleted_at__isnull=True,
-        ).select_related("production_plan", "pond").order_by("-start_date")
+        ).select_related("production_plan").order_by("-start_date")
 
     def perform_create(self, serializer):
         farm_id = self.kwargs.get("farm_pk")
@@ -64,8 +64,8 @@ class CycleViewSet(viewsets.ModelViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class CycleBatchViewSet(viewsets.ModelViewSet):
-    serializer_class = CycleBatchSerializer
+class CyclePondBatchViewSet(viewsets.ModelViewSet):
+    serializer_class = CyclePondBatchSerializer
 
     def get_permissions(self):
         if self.request.method in ("POST", "PATCH", "DELETE"):
@@ -74,7 +74,7 @@ class CycleBatchViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")
-        return CycleBatch.objects.filter(
+        return CyclePondBatch.objects.filter(
             cycle__farm_id=farm_id
         ).select_related("cycle", "pond_batch").order_by("-id")
 

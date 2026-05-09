@@ -45,7 +45,6 @@ class Cycle(models.Model):
 
     farm = models.ForeignKey("farms.Farm", on_delete=models.CASCADE)
     specie = models.ForeignKey("species.Specie", on_delete=models.CASCADE)
-    pond = models.ForeignKey("ponds.Pond", on_delete=models.CASCADE)
     production_plan = models.ForeignKey(ProductionPlan, on_delete=models.PROTECT)
     name = models.CharField(max_length=150)
     start_date = models.DateField()
@@ -70,7 +69,7 @@ class Cycle(models.Model):
         return f"{self.name} - {self.state}"
 
 
-class CycleBatch(models.Model):
+class CyclePondBatch(models.Model):
     cycle = models.ForeignKey(Cycle, on_delete=models.CASCADE)
     pond_batch = models.ForeignKey(PondBatch, on_delete=models.CASCADE)
     quantity = models.PositiveIntegerField()
@@ -81,11 +80,11 @@ class CycleBatch(models.Model):
     class Meta:
         db_table = "cycle_batch"
         ordering = ["-id"]
-        verbose_name = "Cycle Batch"
-        verbose_name_plural = "Cycle Batches"
+        verbose_name = "Cycle Pond Batch"
+        verbose_name_plural = "Cycle Pond Batches"
 
     def __str__(self):
         return f"{self.cycle.name} - Batch {self.pond_batch.batch.code}"
 
 
-__all__ = ["ProductionPlan", "Cycle", "CycleBatch"]
+__all__ = ["ProductionPlan", "Cycle", "CyclePondBatch"]
