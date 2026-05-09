@@ -1,4 +1,4 @@
-from django.utils import timezone
+from django.db.models import Exists, OuterRef
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -24,7 +24,17 @@ class BatchViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")
-        return Batch.objects.filter(farm_id=farm_id).order_by("-created_at")
+        qs = Batch.objects.filter(farm_id=farm_id)
+        sin_estanque = self.request.query_params.get("sin_estanque")
+        if sin_estanque is not None and str(sin_estanque).lower() in (
+            "true",
+            "1",
+            "yes",
+        ):
+            qs = qs.filter(
+                ~Exists(PondBatch.objects.filter(batch_id=OuterRef("pk")))
+            )
+        return qs.order_by("-created_at")
 
     def perform_create(self, serializer):
         farm_id = self.kwargs.get("farm_pk")
