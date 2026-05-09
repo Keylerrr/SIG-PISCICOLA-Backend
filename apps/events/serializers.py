@@ -59,13 +59,13 @@ class GradingEventSerializer(serializers.ModelSerializer):
             })
 
         if cycle and source:
-            if not CycleBatch.objects.filter(cycle=cycle, pond_batch=source).exists():
+            if not CyclePondBatch.objects.filter(cycle=cycle, pond_batch=source).exists():
                 raise serializers.ValidationError({
                     "source_pond_batch": "El PondBatch origen no está actualmente en este ciclo."
                 })
 
         if cycle and destination:
-            if not CycleBatch.objects.filter(cycle=cycle, pond_batch=destination).exists():
+            if not CyclePondBatch.objects.filter(cycle=cycle, pond_batch=destination).exists():
                 raise serializers.ValidationError({
                     "to_pond_batch": "El PondBatch destino no está actualmente en este ciclo."
                 })
