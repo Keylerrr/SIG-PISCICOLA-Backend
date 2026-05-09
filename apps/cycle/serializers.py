@@ -204,6 +204,12 @@ class CyclePondBatchSerializer(serializers.ModelSerializer):
                 "cycle": "Solo se pueden agregar lotes a ciclos en progreso."
             })
 
+        if pond_batch and pond_batch.end_date is not None:
+            raise serializers.ValidationError({
+                "pond_batch": "El PondBatch ya no está activo en el estanque (end_date no es nulo). "
+                             "Solo se pueden agregar lotes actualmente presentes en el estanque."
+            })
+
         if cycle and pond_batch:
             batch = pond_batch.batch
             
