@@ -15,10 +15,10 @@ class BuyViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         if self.action in ("list", "retrieve"):
-            return [AdminOr(IsFarmMember)()]  # ver compras → cualquier miembro
+            return [AdminOr(IsFarmMember)()]
         return [
             AdminOr(CanManageInventory)()
-        ]  # crear/editar/eliminar → MANAGE_INVENTORY
+        ] 
 
     def get_queryset(self):
         qs = (

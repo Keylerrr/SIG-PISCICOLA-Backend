@@ -68,7 +68,7 @@ class InventoryMovement(models.Model):
         related_name="inventory_movements",
     )
     pond_id = models.ForeignKey("ponds.Pond", on_delete=models.CASCADE, null=True)
-    cycle_id = models.PositiveIntegerField(null=True, blank=True)
+    cycle_id = models.ForeignKey("cycle.Cycle", on_delete=models.CASCADE, null=True)
     movement_type = models.CharField(max_length=10, choices=MovementType.choices)
     quantity = models.DecimalField(max_digits=12, decimal_places=4)
     unit_cost = models.DecimalField(max_digits=12, decimal_places=2, default=0)
