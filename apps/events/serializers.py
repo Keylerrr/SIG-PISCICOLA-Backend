@@ -3,7 +3,7 @@ from rest_framework import serializers
 from datetime import date
 
 from apps.batch.models import PondBatch
-from apps.cycle.models import Cycle
+from apps.cycle.models import Cycle, CyclePondBatch
 from .models import GradingEvent
 
 
@@ -52,6 +52,35 @@ class GradingEventSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 "cycle": "Solo se puede clasificar en ciclos que están en progreso."
             })
+
+        if source and destination and source.batch.biological_state != destination.batch.biological_state:
+            raise serializers.ValidationError({
+                "to_pond_batch": "Los lotes deben tener el mismo estado biológico para clasificar."
+            })
+
+        if cycle and source:
+            if not CycleBatch.objects.filter(cycle=cycle, pond_batch=source).exists():
+                raise serializers.ValidationError({
+                    "source_pond_batch": "El PondBatch origen no está actualmente en este ciclo."
+                })
+
+        if cycle and destination:
+            if not CycleBatch.objects.filter(cycle=cycle, pond_batch=destination).exists():
+                raise serializers.ValidationError({
+                    "to_pond_batch": "El PondBatch destino no está actualmente en este ciclo."
+                })
+
+        if destination:
+            destination_pond = destination.pond
+            active_cycle_in_pond = Cycle.objects.filter(
+                farm_id=destination_pond.farm_id,
+                state=Cycle.State.IN_PROGRESS
+            ).exclude(id=cycle.id if cycle else None).exists()
+            
+            if active_cycle_in_pond:
+                raise serializers.ValidationError({
+                    "to_pond_batch": "El estanque destino tiene un ciclo en proceso. Solo se puede transferir a estanques sin ciclo activo."
+                })
 
         if source and destination and source.pond == destination.pond:
             raise serializers.ValidationError({

@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from datetime import date
 
-from .models import ProductionPlan, Cycle, CycleBatch
+from .models import ProductionPlan, Cycle, CyclePondBatch
 
 
 class ProductionPlanSerializer(serializers.ModelSerializer):
@@ -167,9 +167,9 @@ class CycleSerializer(serializers.ModelSerializer):
         return data
 
 
-class CycleBatchSerializer(serializers.ModelSerializer):
+class CyclePondBatchSerializer(serializers.ModelSerializer):
     class Meta:
-        model = CycleBatch
+        model = CyclePondBatch
         fields = [
             "id",
             "cycle",
@@ -218,7 +218,7 @@ class CycleBatchSerializer(serializers.ModelSerializer):
                 })
 
             # Validar que todos los batches del ciclo estén en la misma etapa biológica
-            cycle_batches = CycleBatch.objects.filter(cycle=cycle)
+            cycle_batches = CyclePondBatch.objects.filter(cycle=cycle)
             if cycle_batches.exists():
                 other_batch_biological_state = cycle_batches.first().pond_batch.batch.biological_state
                 if batch.biological_state != other_batch_biological_state:

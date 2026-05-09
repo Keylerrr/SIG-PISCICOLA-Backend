@@ -60,7 +60,7 @@ class AuditLog(models.Model):
         BATCH_TRANSFER = "BatchTransfer", "BatchTransfer"
         GRADING_EVENT = "GradingEvent", "GradingEvent"
         SALE_DETAIL = "SaleDetail", "SaleDetail"
-        CYCLE_BATCH = "CycleBatch", "CycleBatch"
+        CYCLE_POND_BATCH = "CyclePondBatch", "Cycle Pond Batch"
         POND_BATCH = "PondBatch", "PondBatch"
         SPECIE_POND_TYPE = "SpeciePondType", "SpeciePondType"
 

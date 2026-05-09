@@ -1,7 +1,7 @@
 from rest_framework.routers import DefaultRouter
 from django.urls import path
 
-from .views import ProductionPlanViewSet, CycleViewSet, CycleBatchViewSet
+from .views import ProductionPlanViewSet, CycleViewSet, CyclePondBatchViewSet
 
 router = DefaultRouter()
 
@@ -50,7 +50,7 @@ urlpatterns = [
     ),
     path(
         "farms/<int:farm_pk>/cycle-batches/",
-        CycleBatchViewSet.as_view(
+        CyclePondBatchViewSet.as_view(
             {
                 "get": "list",
                 "post": "create",
@@ -60,7 +60,7 @@ urlpatterns = [
     ),
     path(
         "farms/<int:farm_pk>/cycle-batches/<int:pk>/",
-        CycleBatchViewSet.as_view(
+        CyclePondBatchViewSet.as_view(
             {
                 "get": "retrieve",
                 "patch": "partial_update",

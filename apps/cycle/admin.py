@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import ProductionPlan, Cycle, CycleBatch
+from .models import ProductionPlan, Cycle, CyclePondBatch
 
 
 @admin.register(ProductionPlan)
@@ -111,8 +111,8 @@ class CycleAdmin(admin.ModelAdmin):
     )
 
 
-@admin.register(CycleBatch)
-class CycleBatchAdmin(admin.ModelAdmin):
+@admin.register(CyclePondBatch)
+class CyclePondBatchAdmin(admin.ModelAdmin):
     list_display = ["cycle", "pond_batch", "quantity"]
     list_filter = ["cycle__farm"]
     search_fields = ["cycle__name", "pond_batch__batch__code"]
