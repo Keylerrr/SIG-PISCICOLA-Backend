@@ -72,6 +72,13 @@ def replace_feeding_plan(
             feeding_plan_id=locked.pk,
             status=FeedingEvent.Status.SCHEDULED,
         ).delete()
+        if FeedingPlan.objects.filter(
+            cycle=cycle,
+            deleted_at__isnull=True,
+        ).exists():
+            raise ValueError(
+                "El ciclo indicado ya tiene un plan de alimentación vigente."
+            )
         new_plan = FeedingPlan.objects.create(
             farm_id=farm_id,
             cycle=cycle,
