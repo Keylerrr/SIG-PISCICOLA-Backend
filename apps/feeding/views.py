@@ -11,9 +11,11 @@ from .models import FeedingEvent, FeedingPlan, FeedingSchedule
 from .serializers import (
     FeedingEventSerializer,
     FeedingEventUpdateSerializer,
+    FeedingPlanReplaceSerializer,
     FeedingPlanSerializer,
     FeedingScheduleSerializer,
 )
+from .utils import replace_feeding_plan
 
 
 def _get_farm(farm_id):
@@ -176,26 +178,58 @@ class FeedingPlanDetailView(APIView):
             return [AdminOr(IsFarmMember)()]
         return [AdminOr(CanManageCycle)()]
 
-    def _get_plan(self, farm_id, plan_id):
+    def _get_plan(self, farm_id, plan_id, *, current_only: bool = False):
         try:
-            return FeedingPlan.objects.select_related(
+            qs = FeedingPlan.objects.select_related(
                 "cycle", "feeding_schedule", "farm"
-            ).get(pk=plan_id, farm_id=farm_id, deleted_at__isnull=True)
+            ).filter(pk=plan_id, farm_id=farm_id)
+            if current_only:
+                qs = qs.filter(deleted_at__isnull=True)
+            return qs.get()
         except FeedingPlan.DoesNotExist:
             return None
 
     def get(self, request, farm_id, plan_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
-        plan = self._get_plan(farm_id, plan_id)
+        plan = self._get_plan(farm_id, plan_id, current_only=False)
         if not plan:
             return _plan_not_found_response()
         return Response(FeedingPlanSerializer(plan).data)
 
+    def patch(self, request, farm_id, plan_id):
+        farm = _get_farm(farm_id)
+        if not farm:
+            return _farm_not_found_response()
+        plan = self._get_plan(farm_id, plan_id, current_only=True)
+        if not plan:
+            return _plan_not_found_response()
+        serializer = FeedingPlanReplaceSerializer(
+            data=request.data,
+            context={"plan": plan, "farm_id": farm_id},
+        )
+        serializer.is_valid(raise_exception=True)
+        vd = serializer.validated_data
+        try:
+            new_plan = replace_feeding_plan(
+                farm_id=farm_id,
+                old_plan=plan,
+                cycle=vd["cycle"],
+                feeding_schedule=vd["feeding_schedule"],
+                start_date=vd["start_date"],
+                end_date=vd["end_date"],
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_409_CONFLICT,
+            )
+        return Response(FeedingPlanSerializer(new_plan).data)
+
     def delete(self, request, farm_id, plan_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
-        plan = self._get_plan(farm_id, plan_id)
+        plan = self._get_plan(farm_id, plan_id, current_only=True)
         if not plan:
             return _plan_not_found_response()
         plan.deleted_at = timezone.now()
@@ -211,10 +245,7 @@ class FeedingEventListView(APIView):
     def get(self, request, farm_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
-        qs = FeedingEvent.objects.filter(
-            farm_id=farm_id,
-            feeding_plan__deleted_at__isnull=True,
-        ).select_related(
+        qs = FeedingEvent.objects.filter(farm_id=farm_id).select_related(
             "cycle",
             "feeding_plan",
             "farm",
@@ -251,7 +282,6 @@ class FeedingEventDetailView(APIView):
             ).get(
                 pk=event_id,
                 farm_id=farm_id,
-                feeding_plan__deleted_at__isnull=True,
             )
         except FeedingEvent.DoesNotExist:
             return None

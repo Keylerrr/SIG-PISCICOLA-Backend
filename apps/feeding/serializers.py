@@ -6,14 +6,50 @@ from apps.cycle.models import Cycle
 from apps.products.models import Product
 from apps.species.models import SpecieFeedingReference
 
-from .constants import (
-    FEED_SCHEDULE_PRODUCT_TYPE_NAMES,
-    FEEDING_WORKDAY_END_HOUR,
-    FEEDING_WORKDAY_START_HOUR,
-    feeding_work_window_minutes,
-)
+from .constants import FEED_SCHEDULE_PRODUCT_TYPE_NAMES, MINUTES_PER_DAY
 from .models import FeedingEvent, FeedingPlan, FeedingSchedule
 from .utils import create_feeding_events_for_plan
+
+
+def _validate_feeding_plan_business_rules(
+    *,
+    farm_id: int,
+    cycle: Cycle,
+    schedule: FeedingSchedule,
+    start_date,
+    end_date,
+):
+    errors = {}
+    if cycle.deleted_at:
+        errors["cycle"] = "El ciclo no está disponible."
+    if cycle.farm_id != farm_id:
+        errors["cycle"] = "El ciclo debe pertenecer a la misma granja."
+    if schedule.farm_id != farm_id:
+        errors["feeding_schedule"] = "El cronograma debe pertenecer a la misma granja."
+    if cycle.specie_id != schedule.specie_id:
+        errors["feeding_schedule"] = (
+            "La especie del cronograma debe coincidir con la del ciclo."
+        )
+    if cycle.state in (Cycle.State.FINISHED, Cycle.State.CANCELLED):
+        errors["cycle"] = (
+            "No se puede asociar un plan a un ciclo finalizado o cancelado."
+        )
+    if start_date > end_date:
+        errors["end_date"] = "La fecha de fin debe ser mayor o igual al inicio."
+    if start_date < cycle.start_date:
+        errors["start_date"] = (
+            "El inicio del plan no puede ser anterior al inicio del ciclo."
+        )
+    if end_date > cycle.estimated_finish_date:
+        errors["end_date"] = (
+            "La fecha de fin no puede superar la fecha estimada de fin del ciclo."
+        )
+    if cycle.finish_date and end_date > cycle.finish_date:
+        errors["end_date"] = (
+            "La fecha de fin no puede superar la fecha de cierre del ciclo."
+        )
+    if errors:
+        raise serializers.ValidationError(errors)
 
 
 class FeedingScheduleSerializer(serializers.ModelSerializer):
@@ -146,19 +182,17 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
             getattr(instance, "gap_between_times_per_day", None),
         )
         if times_pd is not None and gap_min is not None and times_pd > 1:
-            window = feeding_work_window_minutes()
             total_span = (times_pd - 1) * gap_min
-            if total_span > window:
-                max_gap = window // (times_pd - 1)
+            if total_span >= MINUTES_PER_DAY:
+                max_gap = (MINUTES_PER_DAY - 1) // (times_pd - 1)
                 raise serializers.ValidationError(
                     {
                         "gap_between_times_per_day": (
-                            f"Con la jornada en campo ({FEEDING_WORKDAY_START_HOUR:02d}:00–"
-                            f"{FEEDING_WORKDAY_END_HOUR:02d}:00), {times_pd} raciones por día "
-                            f"no caben con {gap_min} minutos entre consecutivas: de la primera "
-                            f"a la última serían {total_span} minutos y el máximo en ventana es "
-                            f"{window}. Con esta frecuencia, el intervalo no debe superar "
-                            f"{max_gap} minutos."
+                            f"Con {times_pd} raciones por día no caben intervalos de "
+                            f"{gap_min} minutos entre raciones consecutivas: de la primera a la "
+                            f"última suman {total_span} minutos y deben caber en un día "
+                            f"(menos de {MINUTES_PER_DAY}). Con esa frecuencia el intervalo "
+                            f"máximo es {max_gap} minutos."
                         )
                     }
                 )
@@ -343,66 +377,27 @@ class FeedingPlanSerializer(serializers.ModelSerializer):
                 {"feeding_schedule": "Cronograma no encontrado o no disponible."}
             )
 
-        if cycle.deleted_at:
-            raise serializers.ValidationError(
-                {"cycle": "El ciclo no está disponible."}
-            )
-        if cycle.farm_id != farm_id:
-            raise serializers.ValidationError(
-                {"cycle": "El ciclo debe pertenecer a la misma granja."}
-            )
-        if schedule.farm_id != farm_id:
-            raise serializers.ValidationError(
-                {
-                    "feeding_schedule": (
-                        "El cronograma debe pertenecer a la misma granja."
-                    )
-                }
-            )
-        if cycle.specie_id != schedule.specie_id:
-            raise serializers.ValidationError(
-                {
-                    "feeding_schedule": (
-                        "La especie del cronograma debe coincidir con la del ciclo."
-                    )
-                }
-            )
-        if cycle.state in (Cycle.State.FINISHED, Cycle.State.CANCELLED):
+        start = data["start_date"]
+        end = data["end_date"]
+        _validate_feeding_plan_business_rules(
+            farm_id=farm_id,
+            cycle=cycle,
+            schedule=schedule,
+            start_date=start,
+            end_date=end,
+        )
+
+        if FeedingPlan.objects.filter(
+            cycle=cycle,
+            deleted_at__isnull=True,
+        ).exists():
             raise serializers.ValidationError(
                 {
                     "cycle": (
-                        "No se puede asociar un plan a un ciclo finalizado o cancelado."
-                    )
-                }
-            )
-
-        start = data["start_date"]
-        end = data["end_date"]
-        if start > end:
-            raise serializers.ValidationError(
-                {"end_date": "La fecha de fin debe ser mayor o igual al inicio."}
-            )
-        if start < cycle.start_date:
-            raise serializers.ValidationError(
-                {
-                    "start_date": (
-                        "El inicio del plan no puede ser anterior al inicio del ciclo."
-                    )
-                }
-            )
-        if end > cycle.estimated_finish_date:
-            raise serializers.ValidationError(
-                {
-                    "end_date": (
-                        "La fecha de fin no puede superar la fecha estimada de fin del ciclo."
-                    )
-                }
-            )
-        if cycle.finish_date and end > cycle.finish_date:
-            raise serializers.ValidationError(
-                {
-                    "end_date": (
-                        "La fecha de fin no puede superar la fecha de cierre del ciclo."
+                        "Ya existe un plan de alimentación vigente para este ciclo. "
+                        "Para cambiarlo, use PATCH sobre ese plan: se creará uno nuevo, se "
+                        "archivará el anterior y se conservará el historial de eventos "
+                        "ejecutados u omitidos."
                     )
                 }
             )
@@ -415,6 +410,66 @@ class FeedingPlanSerializer(serializers.ModelSerializer):
             plan = super().create(validated_data)
             create_feeding_events_for_plan(plan)
         return plan
+
+
+class FeedingPlanReplaceSerializer(serializers.Serializer):
+    cycle = serializers.PrimaryKeyRelatedField(
+        queryset=Cycle.objects.select_related("farm", "specie").all(),
+        required=False,
+    )
+    feeding_schedule = serializers.PrimaryKeyRelatedField(
+        queryset=FeedingSchedule.objects.filter(deleted_at__isnull=True).select_related(
+            "farm", "specie"
+        ),
+        required=False,
+    )
+    start_date = serializers.DateField(required=False)
+    end_date = serializers.DateField(required=False)
+
+    def validate(self, data):
+        old: FeedingPlan = self.context["plan"]
+        farm_id = self.context["farm_id"]
+        if not data:
+            raise serializers.ValidationError(
+                "Debe enviar al menos uno de: cycle, feeding_schedule, "
+                "start_date, end_date."
+            )
+
+        cycle_obj = data.get("cycle", old.cycle)
+        schedule_obj = data.get("feeding_schedule", old.feeding_schedule)
+        start = data.get("start_date", old.start_date)
+        end = data.get("end_date", old.end_date)
+
+        try:
+            cycle_obj = Cycle.objects.select_related("farm", "specie").get(
+                pk=cycle_obj.pk
+            )
+        except Cycle.DoesNotExist:
+            raise serializers.ValidationError({"cycle": "Ciclo no encontrado."})
+
+        try:
+            schedule_obj = FeedingSchedule.objects.select_related(
+                "farm", "specie"
+            ).get(pk=schedule_obj.pk, deleted_at__isnull=True)
+        except FeedingSchedule.DoesNotExist:
+            raise serializers.ValidationError(
+                {"feeding_schedule": "Cronograma no encontrado o no disponible."}
+            )
+
+        _validate_feeding_plan_business_rules(
+            farm_id=farm_id,
+            cycle=cycle_obj,
+            schedule=schedule_obj,
+            start_date=start,
+            end_date=end,
+        )
+
+        return {
+            "cycle": cycle_obj,
+            "feeding_schedule": schedule_obj,
+            "start_date": start,
+            "end_date": end,
+        }
 
 
 class FeedingEventSerializer(serializers.ModelSerializer):
@@ -445,78 +500,101 @@ class FeedingEventUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = FeedingEvent
         fields = [
-            "date",
-            "scheduled_time",
             "status",
             "actual_quantity",
             "actual_unit",
         ]
 
+    def validate_actual_quantity(self, value):
+        if value is None:
+            raise serializers.ValidationError(
+                "La cantidad real es obligatoria y debe ser mayor a 0."
+            )
+        if value <= 0:
+            raise serializers.ValidationError(
+                "La cantidad real debe ser mayor a 0."
+            )
+        return value
+
     def validate(self, data):
         instance = self.instance
-        if instance.status != FeedingEvent.Status.SCHEDULED:
+
+        if instance.status == FeedingEvent.Status.SKIPPED:
             raise serializers.ValidationError(
-                "Solo se pueden actualizar eventos en estado programado."
+                "No se puede modificar un evento omitido."
             )
 
-        wants_close = "status" in data
-        wants_reschedule = "date" in data or "scheduled_time" in data
-
-        if not wants_close and not wants_reschedule:
-            raise serializers.ValidationError(
-                "Indique status (completed o skipped) para cerrar el evento, "
-                "o date y/o scheduled_time para reprogramar."
-            )
-
-        if wants_reschedule:
-            plan = instance.feeding_plan
-            effective_date = data.get("date", instance.date)
-            if effective_date < plan.start_date or effective_date > plan.end_date:
-                raise serializers.ValidationError(
-                    {
-                        "date": (
-                            "La fecha debe estar entre el inicio y el fin del plan "
-                            "de alimentación."
-                        )
-                    }
-                )
-
-        if wants_close:
-            new_status = data["status"]
-            if new_status == FeedingEvent.Status.SCHEDULED:
+        if instance.status == FeedingEvent.Status.COMPLETED:
+            if "status" in data:
                 raise serializers.ValidationError(
                     {
                         "status": (
-                            "El evento ya está programado. "
-                            "Para reprogramar omita status y envíe date y/o scheduled_time."
+                            "No puede cambiar el estado de un evento ya completado; solo "
+                            "puede corregir la cantidad y la unidad reales."
                         )
                     }
                 )
-            if new_status not in (
-                FeedingEvent.Status.COMPLETED,
-                FeedingEvent.Status.SKIPPED,
-            ):
+            if not data:
                 raise serializers.ValidationError(
-                    {"status": "Solo se admite completar u omitir el evento."}
+                    "Envíe actual_quantity y/o actual_unit para corregir el registro."
                 )
-            if new_status == FeedingEvent.Status.COMPLETED:
-                aq = data.get("actual_quantity", instance.actual_quantity)
-                if aq is None:
-                    raise serializers.ValidationError(
-                        {
-                            "actual_quantity": (
-                                "Indique la cantidad real al completar el evento."
-                            )
-                        }
+            return data
+
+        # scheduled
+        if "actual_quantity" in data or "actual_unit" in data:
+            raise serializers.ValidationError(
+                {
+                    "actual_quantity": (
+                        "Mientras el evento está programado no se aceptan cantidad ni unidad "
+                        "reales. Cierre el evento con status=completed y envíe ambos campos, "
+                        "o status=skipped."
                     )
-                if "actual_unit" not in data:
-                    raise serializers.ValidationError(
-                        {
-                            "actual_unit": (
-                                "Indique la unidad de la cantidad real al completar el evento."
-                            )
-                        }
+                }
+            )
+
+        if "status" not in data:
+            raise serializers.ValidationError(
+                {
+                    "status": (
+                        "Indique status=completed o status=skipped para cerrar el evento."
                     )
+                }
+            )
+
+        new_status = data["status"]
+        if new_status not in (
+            FeedingEvent.Status.COMPLETED,
+            FeedingEvent.Status.SKIPPED,
+        ):
+            raise serializers.ValidationError(
+                {
+                    "status": (
+                        "Cuando envía «status», solo se aceptan «completed» o «skipped». "
+                        "No use «scheduled»: el evento ya está programado. Otros valores no "
+                        "son válidos."
+                    )
+                }
+            )
+
+        if new_status == FeedingEvent.Status.COMPLETED:
+            if "actual_quantity" not in data:
+                raise serializers.ValidationError(
+                    {
+                        "actual_quantity": (
+                            "Indique la cantidad real al completar el evento."
+                        )
+                    }
+                )
+
+            if "actual_unit" not in data:
+                raise serializers.ValidationError(
+                    {
+                        "actual_unit": (
+                            "Indique la unidad de la cantidad real al completar el evento."
+                        )
+                    }
+                )
+
         return data
 
     def update(self, instance, validated_data):
@@ -527,25 +605,21 @@ class FeedingEventUpdateSerializer(serializers.ModelSerializer):
             else None
         )
 
-        if "date" in validated_data:
-            instance.date = validated_data["date"]
-        if "scheduled_time" in validated_data:
-            instance.scheduled_time = validated_data["scheduled_time"]
-
-        if "status" in validated_data:
-            new_status = validated_data["status"]
-            instance.status = new_status
+        if instance.status == FeedingEvent.Status.COMPLETED:
             if "actual_quantity" in validated_data:
                 instance.actual_quantity = validated_data["actual_quantity"]
             if "actual_unit" in validated_data:
                 instance.actual_unit = validated_data["actual_unit"]
-            if new_status in (
-                FeedingEvent.Status.COMPLETED,
-                FeedingEvent.Status.SKIPPED,
-            ):
-                instance.completed_at = timezone.now()
-                if user is not None:
-                    instance.completed_by = user
+            instance.save()
+            return instance
 
+        new_status = validated_data["status"]
+        instance.status = new_status
+        if new_status == FeedingEvent.Status.COMPLETED:
+            instance.actual_quantity = validated_data["actual_quantity"]
+            instance.actual_unit = validated_data["actual_unit"]
+        instance.completed_at = timezone.now()
+        if user is not None:
+            instance.completed_by = user
         instance.save()
         return instance
