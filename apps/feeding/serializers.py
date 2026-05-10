@@ -4,7 +4,7 @@ from rest_framework import serializers
 
 from apps.cycle.models import Cycle
 from apps.products.models import Product
-from apps.species.models import SpecieFeedingReference
+from apps.species.models import Specie, SpecieFeedingReference
 
 from .constants import FEED_SCHEDULE_PRODUCT_TYPE_NAMES, MINUTES_PER_DAY
 from .models import FeedingEvent, FeedingPlan, FeedingSchedule
@@ -199,6 +199,17 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         instance = self.instance
+        farm_ctx = self.context.get("farm")
+        if instance is None and farm_ctx is not None:
+            if getattr(farm_ctx, "deleted_at", None) is not None:
+                raise serializers.ValidationError(
+                    {
+                        "farm": (
+                            "Solo puede crear cronogramas para una granja activa "
+                            "(sin baja lógica)."
+                        ),
+                    }
+                )
         if instance is not None:
             for field, message in self._SCHEDULE_PATCH_FORBIDDEN.items():
                 if field in data:
@@ -305,6 +316,16 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
                         }
                     )
 
+        raw_specie = data.get("specie", getattr(instance, "specie_id", None))
+        specie_pk = getattr(raw_specie, "pk", raw_specie)
+        if farm_id is not None and specie_pk is not None:
+            try:
+                Specie.objects.get(pk=specie_pk)
+            except Specie.DoesNotExist:
+                raise serializers.ValidationError(
+                    {"specie": "Especie no encontrada."}
+                )
+
         if farm_id is not None:
             if instance is None:
                 schedule_name = data.get("name")
@@ -349,6 +370,15 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
                         "non_field_errors": [
                             "Solo puede versionar el cronograma vigente (is_current). "
                             "Use el último registro de la cadena."
+                        ],
+                    }
+                )
+            if old.farm.deleted_at is not None:
+                raise serializers.ValidationError(
+                    {
+                        "non_field_errors": [
+                            "La granja a la que pertenece este cronograma está dada de baja; "
+                            "no se pueden crear nuevas versiones."
                         ],
                     }
                 )

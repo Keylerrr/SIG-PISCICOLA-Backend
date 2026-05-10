@@ -138,11 +138,64 @@ class FeedingScheduleDetailView(APIView):
         schedule = self._get_schedule(farm_id, schedule_id)
         if not schedule:
             return _schedule_not_found_response()
+        if FeedingPlan.objects.filter(
+            feeding_schedule_id=schedule.pk,
+            deleted_at__isnull=True,
+        ).exists():
+            return Response(
+                {
+                    "detail": (
+                        "No puede eliminar el cronograma mientras existan planes de "
+                        "alimentación vigentes asociados a él."
+                    ),
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         now = timezone.now()
         schedule.is_current = False
         schedule.deleted_at = now
         schedule.save(update_fields=["is_current", "deleted_at"])
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class FeedingScheduleVersionsListView(APIView):
+    
+    def get_permissions(self):
+        return [AdminOr(IsFarmMember)()]
+
+    def get(self, request, farm_id, schedule_id):
+        if not _get_farm(farm_id):
+            return _farm_not_found_response()
+        try:
+            head = FeedingSchedule.objects.select_related(
+                "product", "specie", "parent"
+            ).get(
+                pk=schedule_id,
+                farm_id=farm_id,
+                is_current=True,
+                deleted_at__isnull=True,
+            )
+        except FeedingSchedule.DoesNotExist:
+            return _schedule_not_found_response()
+
+        chain = []
+        cur = head
+        seen: set[int] = set()
+        while cur is not None and cur.pk not in seen:
+            seen.add(cur.pk)
+            chain.append(cur)
+            pid = cur.parent_id
+            if not pid:
+                break
+            cur = (
+                FeedingSchedule.objects.select_related(
+                    "product", "specie", "parent"
+                )
+                .filter(pk=pid, farm_id=farm_id)
+                .first()
+            )
+        chain.reverse()
+        return Response(FeedingScheduleSerializer(chain, many=True).data)
 
 
 class FeedingPlanListCreateView(APIView):

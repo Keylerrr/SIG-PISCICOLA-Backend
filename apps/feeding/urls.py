@@ -7,12 +7,17 @@ from .views import (
     FeedingPlanListCreateView,
     FeedingScheduleDetailView,
     FeedingScheduleListCreateView,
+    FeedingScheduleVersionsListView,
 )
 
 urlpatterns = [
     path(
         "farms/<int:farm_id>/feeding-schedules/",
         FeedingScheduleListCreateView.as_view(),
+    ),
+    path(
+        "farms/<int:farm_id>/feeding-schedules/<int:schedule_id>/versions/",
+        FeedingScheduleVersionsListView.as_view(),
     ),
     path(
         "farms/<int:farm_id>/feeding-schedules/<int:schedule_id>/",
