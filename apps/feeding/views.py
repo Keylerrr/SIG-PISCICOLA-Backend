@@ -57,6 +57,23 @@ def _schedule_not_found_response():
     )
 
 
+def _cycle_not_found_response():
+    return Response(
+        {"detail": "Ciclo no encontrado."},
+        status=status.HTTP_404_NOT_FOUND,
+    )
+
+
+def _get_cycle_in_farm(farm_id: int, cycle_id: int):
+    Cycle = apps.get_model("cycle", "Cycle")
+    try:
+        return Cycle.objects.get(
+            pk=cycle_id, farm_id=farm_id, deleted_at__isnull=True
+        )
+    except Cycle.DoesNotExist:
+        return None
+
+
 def _bad_request(detail: str):
     return Response({"detail": detail}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -249,39 +266,27 @@ class FeedingScheduleVersionsListView(APIView):
         return Response(FeedingScheduleSerializer(chain, many=True).data)
 
 
-class FeedingPlanListCreateView(APIView):
-
+class FarmFeedingSchedulePlansListView(APIView):
     def get_permissions(self):
-        if self.request.method == "GET":
-            return [AdminOr(IsFarmMember)()]
-        return [AdminOr(CanManageCycle)()]
+        return [AdminOr(IsFarmMember)()]
 
-    def get(self, request, farm_id):
-        farm = _get_farm(farm_id)
-        if not farm:
+    def get(self, request, farm_id, schedule_id):
+        if not _get_farm(farm_id):
             return _farm_not_found_response()
-        qs = FeedingPlan.objects.filter(farm_id=farm_id).select_related(
-            "cycle", "feeding_schedule", "farm"
-        )
+        if not _get_schedule_head_for_farm(farm_id, schedule_id):
+            return _schedule_not_found_response()
+
+        qs = FeedingPlan.objects.filter(
+            farm_id=farm_id,
+            feeding_schedule_id=schedule_id,
+        ).select_related("cycle", "feeding_schedule", "farm")
         if not AdminOr(CanManageCycle)().has_permission(request, self):
             qs = qs.filter(deleted_at__isnull=True)
         cycle_param = request.query_params.get("cycle")
         if cycle_param is not None:
             qs = qs.filter(cycle_id=cycle_param)
+        qs = qs.order_by("-created_at")
         return Response(FeedingPlanSerializer(qs, many=True).data)
-
-    def post(self, request, farm_id):
-        farm = _get_farm(farm_id)
-        if not farm:
-            return _farm_not_found_response()
-        serializer = FeedingPlanSerializer(
-            data=request.data, context={"farm": farm}
-        )
-        serializer.is_valid(raise_exception=True)
-        instance = serializer.save()
-        return Response(
-            FeedingPlanSerializer(instance).data, status=status.HTTP_201_CREATED
-        )
 
 
 class FeedingPlanOccupiedRangesView(APIView):
@@ -289,41 +294,11 @@ class FeedingPlanOccupiedRangesView(APIView):
     def get_permissions(self):
         return [AdminOr(IsFarmMember)()]
 
-    def get(self, request, farm_id):
+    def get(self, request, farm_id, cycle_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
-
-        cycle_param = request.query_params.get("cycle")
-        if cycle_param is None or str(cycle_param).strip() == "":
-            return Response(
-                {
-                    "detail": (
-                        "Se requiere el parámetro de consulta «cycle» (id del ciclo)."
-                    )
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        try:
-            cycle_id = int(cycle_param)
-        except (TypeError, ValueError):
-            return Response(
-                {"detail": "El parámetro «cycle» debe ser un entero."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        Cycle = apps.get_model("cycle", "Cycle")
-        try:
-            cycle = Cycle.objects.get(pk=cycle_id, deleted_at__isnull=True)
-        except Cycle.DoesNotExist:
-            return Response(
-                {"detail": "Ciclo no encontrado."},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-        if cycle.farm_id != farm_id:
-            return Response(
-                {"detail": "El ciclo no pertenece a esta granja."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        if not _get_cycle_in_farm(farm_id, cycle_id):
+            return _cycle_not_found_response()
 
         qs = (
             FeedingPlan.objects.filter(
@@ -338,28 +313,66 @@ class FeedingPlanOccupiedRangesView(APIView):
         return Response({"cycle": cycle_id, "ranges": ranges})
 
 
-class FeedingPlanDetailView(APIView):
+def _get_feeding_plan_for_farm(
+    farm_id, plan_id, *, current_only: bool = False, cycle_id: int | None = None
+):
+    try:
+        qs = FeedingPlan.objects.select_related(
+            "cycle", "feeding_schedule", "farm"
+        ).filter(pk=plan_id, farm_id=farm_id)
+        if cycle_id is not None:
+            qs = qs.filter(cycle_id=cycle_id)
+        if current_only:
+            qs = qs.filter(deleted_at__isnull=True)
+        return qs.get()
+    except FeedingPlan.DoesNotExist:
+        return None
+
+
+def _get_schedule_head_for_farm(farm_id: int, schedule_id: int):
+    try:
+        return FeedingSchedule.objects.get(
+            pk=schedule_id,
+            farm_id=farm_id,
+            deleted_at__isnull=True,
+            is_current=True,
+        )
+    except FeedingSchedule.DoesNotExist:
+        return None
+
+
+def _get_plan_for_farm_schedule(
+    farm_id: int, schedule_id: int, plan_id: int, *, current_only: bool = False
+):
+    try:
+        qs = FeedingPlan.objects.select_related(
+            "cycle", "feeding_schedule", "farm"
+        ).filter(
+            pk=plan_id,
+            farm_id=farm_id,
+            feeding_schedule_id=schedule_id,
+        )
+        if current_only:
+            qs = qs.filter(deleted_at__isnull=True)
+        return qs.get()
+    except FeedingPlan.DoesNotExist:
+        return None
+
+
+class FarmFeedingSchedulePlanDetailView(APIView):
+    """Detalle de plan solo lectura: granja → cronograma → plan."""
 
     def get_permissions(self):
-        if self.request.method == "GET":
-            return [AdminOr(IsFarmMember)()]
-        return [AdminOr(CanManageCycle)()]
+        return [AdminOr(IsFarmMember)()]
 
-    def _get_plan(self, farm_id, plan_id, *, current_only: bool = False):
-        try:
-            qs = FeedingPlan.objects.select_related(
-                "cycle", "feeding_schedule", "farm"
-            ).filter(pk=plan_id, farm_id=farm_id)
-            if current_only:
-                qs = qs.filter(deleted_at__isnull=True)
-            return qs.get()
-        except FeedingPlan.DoesNotExist:
-            return None
-
-    def get(self, request, farm_id, plan_id):
+    def get(self, request, farm_id, schedule_id, plan_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
-        plan = self._get_plan(farm_id, plan_id, current_only=False)
+        if not _get_schedule_head_for_farm(farm_id, schedule_id):
+            return _schedule_not_found_response()
+        plan = _get_plan_for_farm_schedule(
+            farm_id, schedule_id, plan_id, current_only=False
+        )
         if not plan:
             return _plan_not_found_response()
         if plan.deleted_at is not None and not AdminOr(CanManageCycle)().has_permission(
@@ -368,11 +381,93 @@ class FeedingPlanDetailView(APIView):
             return _plan_not_found_response()
         return Response(FeedingPlanSerializer(plan).data)
 
-    def patch(self, request, farm_id, plan_id):
+
+class CycleFeedingPlanListCreateView(APIView):
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [AdminOr(IsFarmMember)()]
+        return [AdminOr(CanManageCycle)()]
+
+    def get(self, request, farm_id, cycle_id):
+        if not _get_farm(farm_id):
+            return _farm_not_found_response()
+        if not _get_cycle_in_farm(farm_id, cycle_id):
+            return _cycle_not_found_response()
+
+        qs = FeedingPlan.objects.filter(
+            farm_id=farm_id, cycle_id=cycle_id
+        ).select_related("cycle", "feeding_schedule", "farm")
+        if not AdminOr(CanManageCycle)().has_permission(request, self):
+            qs = qs.filter(deleted_at__isnull=True)
+        schedule_id, err = _parse_optional_id(request.query_params, "feeding_schedule")
+        if err:
+            return err
+        if schedule_id is not None:
+            qs = qs.filter(feeding_schedule_id=schedule_id)
+        qs = qs.order_by("-created_at")
+        return Response(FeedingPlanSerializer(qs, many=True).data)
+
+    def post(self, request, farm_id, cycle_id):
         farm = _get_farm(farm_id)
         if not farm:
             return _farm_not_found_response()
-        plan = self._get_plan(farm_id, plan_id, current_only=True)
+        if not _get_cycle_in_farm(farm_id, cycle_id):
+            return _cycle_not_found_response()
+
+        body = request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
+        raw_cycle = body.get("cycle")
+        if raw_cycle is not None:
+            try:
+                if int(raw_cycle) != cycle_id:
+                    return _bad_request(
+                        "El campo «cycle» del cuerpo debe coincidir con el ciclo de la URL."
+                    )
+            except (TypeError, ValueError):
+                return _bad_request("El campo «cycle» debe ser un entero válido.")
+        body["cycle"] = cycle_id
+
+        serializer = FeedingPlanSerializer(
+            data=body,
+            context={"farm": farm, "fixed_cycle_id": cycle_id},
+        )
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save()
+        return Response(
+            FeedingPlanSerializer(instance).data, status=status.HTTP_201_CREATED
+        )
+
+
+class CycleFeedingPlanDetailView(APIView):
+
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [AdminOr(IsFarmMember)()]
+        return [AdminOr(CanManageCycle)()]
+
+    def get(self, request, farm_id, cycle_id, plan_id):
+        if not _get_farm(farm_id):
+            return _farm_not_found_response()
+        if not _get_cycle_in_farm(farm_id, cycle_id):
+            return _cycle_not_found_response()
+        plan = _get_feeding_plan_for_farm(
+            farm_id, plan_id, current_only=False, cycle_id=cycle_id
+        )
+        if not plan:
+            return _plan_not_found_response()
+        if plan.deleted_at is not None and not AdminOr(CanManageCycle)().has_permission(
+            request, self
+        ):
+            return _plan_not_found_response()
+        return Response(FeedingPlanSerializer(plan).data)
+
+    def patch(self, request, farm_id, cycle_id, plan_id):
+        if not _get_farm(farm_id):
+            return _farm_not_found_response()
+        if not _get_cycle_in_farm(farm_id, cycle_id):
+            return _cycle_not_found_response()
+        plan = _get_feeding_plan_for_farm(
+            farm_id, plan_id, current_only=True, cycle_id=cycle_id
+        )
         if not plan:
             return _plan_not_found_response()
 
@@ -423,10 +518,14 @@ class FeedingPlanDetailView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-    def delete(self, request, farm_id, plan_id):
+    def delete(self, request, farm_id, cycle_id, plan_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
-        plan = self._get_plan(farm_id, plan_id, current_only=True)
+        if not _get_cycle_in_farm(farm_id, cycle_id):
+            return _cycle_not_found_response()
+        plan = _get_feeding_plan_for_farm(
+            farm_id, plan_id, current_only=True, cycle_id=cycle_id
+        )
         if not plan:
             return _plan_not_found_response()
         if feeding_plan_lifecycle_state(plan) == "in_progress":
@@ -444,15 +543,31 @@ class FeedingPlanDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class FeedingEventListView(APIView):
+class FarmFeedingSchedulePlanEventListView(APIView):
 
     def get_permissions(self):
         return [AdminOr(IsFarmMember)()]
 
-    def get(self, request, farm_id):
+    def get(self, request, farm_id, schedule_id, plan_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
-        qs = FeedingEvent.objects.filter(farm_id=farm_id).select_related(
+        if not _get_schedule_head_for_farm(farm_id, schedule_id):
+            return _schedule_not_found_response()
+
+        plan = _get_plan_for_farm_schedule(
+            farm_id, schedule_id, plan_id, current_only=False
+        )
+        if not plan:
+            return _plan_not_found_response()
+        if plan.deleted_at is not None and not AdminOr(CanManageCycle)().has_permission(
+            request, self
+        ):
+            return _plan_not_found_response()
+
+        qs = FeedingEvent.objects.filter(
+            farm_id=farm_id,
+            feeding_plan_id=plan_id,
+        ).select_related(
             "cycle",
             "feeding_plan",
             "farm",
@@ -460,26 +575,24 @@ class FeedingEventListView(APIView):
             "actual_unit",
             "completed_by",
         )
-        if not AdminOr(CanManageCycle)().has_permission(request, self):
-            qs = qs.filter(feeding_plan__deleted_at__isnull=True)
-        plan_param = request.query_params.get("feeding_plan")
-        if plan_param is not None:
-            qs = qs.filter(feeding_plan_id=plan_param)
         cycle_param = request.query_params.get("cycle")
         if cycle_param is not None:
             qs = qs.filter(cycle_id=cycle_param)
+        pond_id, err = _parse_optional_id(request.query_params, "pond")
+        if err:
+            return err
+        if pond_id is not None:
+            qs = qs.filter(cycle__pond_id=pond_id)
         qs = qs.order_by("date", "scheduled_time", "ration_number")
         return Response(FeedingEventSerializer(qs, many=True).data)
 
 
-class FeedingEventDetailView(APIView):
+class FarmFeedingSchedulePlanEventDetailView(APIView):
 
     def get_permissions(self):
-        if self.request.method == "GET":
-            return [AdminOr(IsFarmMember)()]
-        return [AdminOr(CanManageCycle)()]
+        return [AdminOr(IsFarmMember)()]
 
-    def _get_event(self, farm_id, event_id):
+    def _get_event(self, farm_id, plan_id, event_id):
         try:
             return FeedingEvent.objects.select_related(
                 "cycle",
@@ -491,33 +604,119 @@ class FeedingEventDetailView(APIView):
             ).get(
                 pk=event_id,
                 farm_id=farm_id,
+                feeding_plan_id=plan_id,
             )
         except FeedingEvent.DoesNotExist:
             return None
 
-    def get(self, request, farm_id, event_id):
+    def get(self, request, farm_id, schedule_id, plan_id, event_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
-        event = self._get_event(farm_id, event_id)
+        if not _get_schedule_head_for_farm(farm_id, schedule_id):
+            return _schedule_not_found_response()
+
+        plan = _get_plan_for_farm_schedule(
+            farm_id, schedule_id, plan_id, current_only=False
+        )
+        if not plan:
+            return _plan_not_found_response()
+        if plan.deleted_at is not None and not AdminOr(CanManageCycle)().has_permission(
+            request, self
+        ):
+            return _plan_not_found_response()
+
+        event = self._get_event(farm_id, plan_id, event_id)
+        if not event:
+            return _event_not_found_response()
+        return Response(FeedingEventSerializer(event).data)
+
+
+class CycleFeedingEventListView(APIView):
+
+    def get_permissions(self):
+        return [AdminOr(IsFarmMember)()]
+
+    def get(self, request, farm_id, cycle_id, plan_id):
+        if not _get_farm(farm_id):
+            return _farm_not_found_response()
+        if not _get_cycle_in_farm(farm_id, cycle_id):
+            return _cycle_not_found_response()
+        plan = _get_feeding_plan_for_farm(
+            farm_id, plan_id, current_only=False, cycle_id=cycle_id
+        )
+        if not plan:
+            return _plan_not_found_response()
+        if plan.deleted_at is not None and not AdminOr(CanManageCycle)().has_permission(
+            request, self
+        ):
+            return _plan_not_found_response()
+
+        qs = FeedingEvent.objects.filter(
+            farm_id=farm_id,
+            cycle_id=cycle_id,
+            feeding_plan_id=plan_id,
+        ).select_related(
+            "cycle",
+            "feeding_plan",
+            "farm",
+            "planned_unit",
+            "actual_unit",
+            "completed_by",
+        )
+        qs = qs.order_by("date", "scheduled_time", "ration_number")
+        return Response(FeedingEventSerializer(qs, many=True).data)
+
+
+class CycleFeedingEventDetailView(APIView):
+
+    def get_permissions(self):
+        if self.request.method == "GET":
+            return [AdminOr(IsFarmMember)()]
+        return [AdminOr(CanManageCycle)()]
+
+    def _get_event(self, farm_id, cycle_id, plan_id, event_id):
+        try:
+            return FeedingEvent.objects.select_related(
+                "cycle",
+                "feeding_plan",
+                "farm",
+                "planned_unit",
+                "actual_unit",
+                "completed_by",
+            ).get(
+                pk=event_id,
+                farm_id=farm_id,
+                cycle_id=cycle_id,
+                feeding_plan_id=plan_id,
+            )
+        except FeedingEvent.DoesNotExist:
+            return None
+
+    def get(self, request, farm_id, cycle_id, plan_id, event_id):
+        if not _get_farm(farm_id):
+            return _farm_not_found_response()
+        if not _get_cycle_in_farm(farm_id, cycle_id):
+            return _cycle_not_found_response()
+        event = self._get_event(farm_id, cycle_id, plan_id, event_id)
         if not event:
             return _event_not_found_response()
         if (
-            event.feeding_plan_id
-            and event.feeding_plan.deleted_at is not None
+            event.feeding_plan.deleted_at is not None
             and not AdminOr(CanManageCycle)().has_permission(request, self)
         ):
             return _event_not_found_response()
         return Response(FeedingEventSerializer(event).data)
 
-    def patch(self, request, farm_id, event_id):
+    def patch(self, request, farm_id, cycle_id, plan_id, event_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
-        event = self._get_event(farm_id, event_id)
+        if not _get_cycle_in_farm(farm_id, cycle_id):
+            return _cycle_not_found_response()
+        event = self._get_event(farm_id, cycle_id, plan_id, event_id)
         if not event:
             return _event_not_found_response()
         if (
-            event.feeding_plan_id
-            and event.feeding_plan.deleted_at is not None
+            event.feeding_plan.deleted_at is not None
             and not AdminOr(CanManageCycle)().has_permission(request, self)
         ):
             return _event_not_found_response()

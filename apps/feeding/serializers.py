@@ -546,6 +546,12 @@ class FeedingPlanSerializer(serializers.ModelSerializer):
         except Cycle.DoesNotExist:
             raise serializers.ValidationError({"cycle": "Ciclo no encontrado."})
 
+        fixed_cycle_id = self.context.get("fixed_cycle_id")
+        if fixed_cycle_id is not None and cycle.pk != fixed_cycle_id:
+            raise serializers.ValidationError(
+                {"cycle": "El ciclo no coincide con el de la URL."}
+            )
+
         try:
             schedule = FeedingSchedule.objects.select_related("farm", "specie").get(
                 pk=schedule_pk,
