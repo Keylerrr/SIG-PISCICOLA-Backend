@@ -2,9 +2,9 @@
 import random
 import string
 
+import resend
 from django.apps import apps
 from django.conf import settings
-from django.core.mail import send_mail
 from django.db import transaction
 
 from .models import Invitation, Role, User
@@ -15,55 +15,65 @@ def generate_temp_password(length=10):
     return "".join(random.choices(chars, k=length))
 
 
+def send_email(to_email, subject, html_content):
+    try:
+        response = resend.Emails.send(
+            {
+                "from": settings.DEFAULT_FROM_EMAIL,
+                "to": [to_email],
+                "subject": subject,
+                "html": html_content,
+            }
+        )
+        return response
+    except Exception as e:
+        print("Email error:", e)
+        return None
+
+
 def send_credentials_email(email: str, temp_password: str) -> None:
-    send_mail(
-        subject="Bienvenido - Tus credenciales de acceso",
-        message=f"""
-Hola,
+    html = f"""
+    <h2>Bienvenido</h2>
+    <p>Tu cuenta ha sido creada correctamente.</p>
 
-Tu cuenta ha sido creada. Estas son tus credenciales temporales:
-  Correo:     {email}
-  Contraseña: {temp_password}
+    <p>Estas son tus credenciales temporales:</p>
 
-Al iniciar sesión deberás completar tu perfil y cambiar tu contraseña.
-        """,
-        from_email=settings.EMAIL_HOST_USER,
-        recipient_list=[email],
-        fail_silently=False,
-    )
+    <p>Correo: {email}</p>
+    <p>Contraseña: {temp_password}</p>
+    
+
+    <p>Al iniciar sesión deberás completar tu perfil y cambiar tu contraseña.
+    """
+
+    send_email(email, "Bienvenido - Tus credenciales de acceso", html)
 
 
 def send_invitation_notification(email: str, farm_id: int, invited_by: User) -> None:
-    send_mail(
-        subject="Tienes una nueva invitación",
-        message=f"""
-Hola,
+    html = (
+        f"""
+        <p>Hola,</p>
 
-{invited_by.name} {invited_by.lastname} te ha invitado a unirte a la granja #{farm_id},
+        <p>{invited_by.name} {invited_by.lastname} te ha invitado a unirte a la granja #{farm_id},</p>
 
-Ingresa a la plataforma para aceptar o rechazar la invitación.
+        <p>Ingresa a la plataforma para aceptar o rechazar la invitación.</p>
               """,
-        from_email=settings.EMAIL_HOST_USER,
-        recipient_list=[email],
-        fail_silently=False,
     )
+
+    send_email(email, "Tienes una nueva invitación", html)
 
 
 def send_reset_password_email(email: str, uuidb64: str, token: str) -> None:
-    send_mail(
-        subject="Recuperación de contraseña",
-        message=f"""
-Hola,
 
-Se solicitó un restablecimiento de contraseña. Entra en el siguiente enlace para restaurarla:
-{settings.HOST_URL}/{uuidb64}/{token}
+    html = f"""
+    <p>Hola,</p>
 
-Si no enviaste esta solicitud, puedes ignorar este correo.
-        """,
-        from_email=settings.EMAIL_HOST_USER,
-        recipient_list=[email],
-        fail_silently=False,
-    )
+    <p>Se solicitó un restablecimiento de contraseña. Entra en el siguiente enlace para restaurarla:</p>
+    <p>{settings.HOST_URL}/{uuidb64}/{token}</p>
+
+    <p>Si no enviaste esta solicitud, puedes ignorar este correa.</p>
+    """
+
+    send_email(email, "Restablecer contraseña", html)
 
 
 def invite_productor(email: str, creator: User) -> Invitation:
