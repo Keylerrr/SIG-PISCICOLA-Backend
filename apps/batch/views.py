@@ -1,6 +1,7 @@
 from django.db.models import Exists, OuterRef
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
 from apps.accounts.permissions import AdminOr
@@ -72,9 +73,39 @@ class PondBatchViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")
-        return PondBatch.objects.filter(batch__farm_id=farm_id).select_related(
+        qs = PondBatch.objects.filter(batch__farm_id=farm_id).select_related(
             "pond", "batch"
-        ).order_by("-start_date")
+        )
+
+        pond_param = self.request.query_params.get("pond")
+        if pond_param is not None:
+            try:
+                pond_id = int(pond_param)
+            except (TypeError, ValueError):
+                raise ValidationError(
+                    {"pond": "Debe ser un id entero válido."},
+                )
+            qs = qs.filter(pond_id=pond_id, pond__farm_id=farm_id)
+
+        batch_param = self.request.query_params.get("batch")
+        if batch_param is not None:
+            try:
+                batch_id = int(batch_param)
+            except (TypeError, ValueError):
+                raise ValidationError(
+                    {"batch": "Debe ser un id entero válido."},
+                )
+            qs = qs.filter(batch_id=batch_id)
+
+        activos = self.request.query_params.get("activos")
+        if activos is not None and str(activos).lower() in (
+            "true",
+            "1",
+            "yes",
+        ):
+            qs = qs.filter(end_date__isnull=True)
+
+        return qs.order_by("-start_date")
 
     def perform_create(self, serializer):
         serializer.save()
