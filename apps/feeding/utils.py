@@ -6,7 +6,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.cycle.models import Cycle, CycleBatch
+from apps.cycle.models import Cycle, CyclePondBatch
 
 from .models import FeedingEvent, FeedingPlan, FeedingSchedule
 
@@ -30,7 +30,6 @@ def active_plan_date_overlap(
 
 
 def feeding_plan_lifecycle_state(plan: FeedingPlan, today=None):
-    """``finished`` | ``in_progress`` | ``scheduled`` según la fecha actual (timezone)."""
     today = today or timezone.now().date()
     if plan.end_date < today:
         return "finished"
@@ -40,12 +39,8 @@ def feeding_plan_lifecycle_state(plan: FeedingPlan, today=None):
 
 
 def cycle_fish_count_and_avg_weight_g(cycle_id: int) -> tuple[Decimal, Decimal] | None:
-    """
-    Cantidad total de peces y peso promedio (g) ponderado por lote ``CycleBatch``.
-    Sin lotes o sin ejemplares → None.
-    """
     rows = list(
-        CycleBatch.objects.filter(cycle_id=cycle_id).values_list(
+        CyclePondBatch.objects.filter(cycle_id=cycle_id).values_list(
             "quantity", "avg_weight_g"
         )
     )
@@ -84,7 +79,6 @@ def planned_feed_quantity_per_ration(
 
 
 def create_feeding_events_for_plan(plan: FeedingPlan) -> int:
-    """Crea eventos ``SCHEDULED``; ``planned_quantity`` con la fórmula biomasa / tasa / tomas del día."""
     schedule = FeedingSchedule.objects.select_related("product").get(
         pk=plan.feeding_schedule_id
     )
@@ -161,10 +155,6 @@ def update_in_progress_feeding_plan(
     start_date,
     end_date,
 ) -> FeedingPlan:
-    """Acorta el plan vigente al último evento ejecutado, elimina raciones futuras en BD, crea plan nuevo.
-
-    Debe llamarse solo si el plan está en curso; ``farm_id`` debe coincidir con el plan bloqueado.
-    """
     with transaction.atomic():
         locked_old = FeedingPlan.objects.select_for_update().get(pk=old_plan.pk)
         if locked_old.deleted_at is not None:
@@ -186,7 +176,6 @@ def update_in_progress_feeding_plan(
         locked_old.end_date = last_ev.date
         locked_old.save(update_fields=["end_date"])
 
-        # Solo FeedingEvent admite DELETE físico (plan/cronograma: baja por deleted_at).
         FeedingEvent.objects.filter(
             feeding_plan_id=locked_old.pk,
             status=FeedingEvent.Status.SCHEDULED,
@@ -240,7 +229,6 @@ def update_scheduled_feeding_plan(
                 "Las fechas se solapan con otro plan vigente del mismo ciclo."
             )
 
-        # Mismo criterio: solo eventos se borran en BD; el plan se actualiza abajo.
         FeedingEvent.objects.filter(feeding_plan_id=locked.pk).delete()
         locked.cycle_id = cycle.pk
         locked.feeding_schedule_id = feeding_schedule.pk
@@ -267,7 +255,6 @@ def _create_plan_with_events_locked(
     end_date,
     exclude_plan_ids: set | None = None,
 ) -> FeedingPlan:
-    """Crea fila ``FeedingPlan`` y sus eventos; bloquea el ciclo destino (misma transacción)."""
     Cycle.objects.select_for_update().get(pk=cycle.pk)
     if active_plan_date_overlap(
         cycle_id=cycle.pk,

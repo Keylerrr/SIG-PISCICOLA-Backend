@@ -582,7 +582,7 @@ class FarmFeedingSchedulePlanEventListView(APIView):
         if err:
             return err
         if pond_id is not None:
-            qs = qs.filter(cycle__pond_id=pond_id)
+            qs = qs.filter(cycle__cyclepondbatch__pond_batch__pond_id=pond_id).distinct()
         qs = qs.order_by("date", "scheduled_time", "ration_number")
         return Response(FeedingEventSerializer(qs, many=True).data)
 
