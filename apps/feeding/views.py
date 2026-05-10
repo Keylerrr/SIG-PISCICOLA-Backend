@@ -65,7 +65,11 @@ class FeedingScheduleListCreateView(APIView):
         if not farm:
             return _farm_not_found_response()
         qs = (
-            FeedingSchedule.objects.filter(farm=farm, deleted_at__isnull=True)
+            FeedingSchedule.objects.filter(
+                farm=farm,
+                deleted_at__isnull=True,
+                is_current=True,
+            )
             .select_related("product", "specie", "parent")
             .order_by("-updated_at")
         )
@@ -100,6 +104,7 @@ class FeedingScheduleDetailView(APIView):
                 pk=schedule_id,
                 farm_id=farm_id,
                 deleted_at__isnull=True,
+                is_current=True,
             )
         except FeedingSchedule.DoesNotExist:
             return None
@@ -133,8 +138,10 @@ class FeedingScheduleDetailView(APIView):
         schedule = self._get_schedule(farm_id, schedule_id)
         if not schedule:
             return _schedule_not_found_response()
-        schedule.deleted_at = timezone.now()
-        schedule.save()
+        now = timezone.now()
+        schedule.is_current = False
+        schedule.deleted_at = now
+        schedule.save(update_fields=["is_current", "deleted_at"])
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

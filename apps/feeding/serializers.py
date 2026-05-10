@@ -213,6 +213,16 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
                     ),
                 }
             )
+        if instance is None:
+            for field in ("version", "is_current"):
+                if field in data:
+                    raise serializers.ValidationError(
+                        {
+                            field: (
+                                "Este campo lo asigna el sistema al crear el cronograma."
+                            ),
+                        }
+                    )
         min_w = data.get(
             "aceptable_min_weight_g",
             getattr(instance, "aceptable_min_weight_g", None),
@@ -314,6 +324,13 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
                         )
 
         return data
+
+    def create(self, validated_data):
+        validated_data["is_current"] = True
+        validated_data["parent"] = None
+        validated_data["version"] = 1
+        validated_data["farm"] = self.context["farm"]
+        return super().create(validated_data)
 
     def update(self, instance, validated_data):
         with transaction.atomic():
@@ -485,6 +502,7 @@ class FeedingPlanSerializer(serializers.ModelSerializer):
             schedule = FeedingSchedule.objects.select_related("farm", "specie").get(
                 pk=schedule_pk,
                 deleted_at__isnull=True,
+                is_current=True,
             )
         except FeedingSchedule.DoesNotExist:
             raise serializers.ValidationError(
@@ -545,7 +563,10 @@ class FeedingPlanReplaceSerializer(serializers.Serializer):
         required=False,
     )
     feeding_schedule = serializers.PrimaryKeyRelatedField(
-        queryset=FeedingSchedule.objects.filter(deleted_at__isnull=True).select_related(
+        queryset=FeedingSchedule.objects.filter(
+            deleted_at__isnull=True,
+            is_current=True,
+        ).select_related(
             "farm", "specie"
         ),
         required=False,
@@ -577,7 +598,11 @@ class FeedingPlanReplaceSerializer(serializers.Serializer):
         try:
             schedule_obj = FeedingSchedule.objects.select_related(
                 "farm", "specie"
-            ).get(pk=schedule_obj.pk, deleted_at__isnull=True)
+            ).get(
+                pk=schedule_obj.pk,
+                deleted_at__isnull=True,
+                is_current=True,
+            )
         except FeedingSchedule.DoesNotExist:
             raise serializers.ValidationError(
                 {"feeding_schedule": "Cronograma no encontrado o no disponible."}
