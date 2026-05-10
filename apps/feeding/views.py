@@ -15,7 +15,11 @@ from .serializers import (
     FeedingPlanSerializer,
     FeedingScheduleSerializer,
 )
-from .utils import replace_feeding_plan
+from .utils import (
+    feeding_plan_lifecycle_state,
+    update_in_progress_feeding_plan,
+    update_scheduled_feeding_plan,
+)
 
 
 def _get_farm(farm_id):
@@ -317,27 +321,53 @@ class FeedingPlanDetailView(APIView):
         plan = self._get_plan(farm_id, plan_id, current_only=True)
         if not plan:
             return _plan_not_found_response()
+
+        state = feeding_plan_lifecycle_state(plan)
+        if state == "finished":
+            return Response(
+                {
+                    "detail": (
+                        "No se puede modificar un plan cuya fecha de fin ya pasó."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         serializer = FeedingPlanReplaceSerializer(
             data=request.data,
             context={"plan": plan, "farm_id": farm_id},
         )
         serializer.is_valid(raise_exception=True)
         vd = serializer.validated_data
+
         try:
-            new_plan = replace_feeding_plan(
+            if state == "in_progress":
+                new_plan = update_in_progress_feeding_plan(
+                    farm_id=farm_id,
+                    old_plan=plan,
+                    cycle=vd["cycle"],
+                    feeding_schedule=vd["feeding_schedule"],
+                    start_date=vd["start_date"],
+                    end_date=vd["end_date"],
+                )
+                return Response(
+                    FeedingPlanSerializer(new_plan).data,
+                    status=status.HTTP_201_CREATED,
+                )
+            updated_plan = update_scheduled_feeding_plan(
                 farm_id=farm_id,
-                old_plan=plan,
+                plan=plan,
                 cycle=vd["cycle"],
                 feeding_schedule=vd["feeding_schedule"],
                 start_date=vd["start_date"],
                 end_date=vd["end_date"],
             )
+            return Response(FeedingPlanSerializer(updated_plan).data)
         except ValueError as exc:
             return Response(
                 {"detail": str(exc)},
-                status=status.HTTP_409_CONFLICT,
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        return Response(FeedingPlanSerializer(new_plan).data)
 
     def delete(self, request, farm_id, plan_id):
         if not _get_farm(farm_id):
@@ -345,6 +375,16 @@ class FeedingPlanDetailView(APIView):
         plan = self._get_plan(farm_id, plan_id, current_only=True)
         if not plan:
             return _plan_not_found_response()
+        if feeding_plan_lifecycle_state(plan) == "in_progress":
+            return Response(
+                {
+                    "detail": (
+                        "No puede eliminar un plan en curso. Solo se permiten bajas "
+                        "lógicas de planes programados o ya terminados."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         plan.deleted_at = timezone.now()
         plan.save(update_fields=["deleted_at"])
         return Response(status=status.HTTP_204_NO_CONTENT)

@@ -3,12 +3,31 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from apps.cycle.models import Cycle
+from apps.farms.models import Farm
 from apps.products.models import Product
 from apps.species.models import Specie, SpecieFeedingReference
 
 from .constants import FEED_SCHEDULE_PRODUCT_TYPE_NAMES, MINUTES_PER_DAY
 from .models import FeedingEvent, FeedingPlan, FeedingSchedule
-from .utils import create_feeding_events_for_plan
+from .utils import create_feeding_events_for_plan, feeding_plan_lifecycle_state
+
+
+def _active_plan_date_overlap(
+    *,
+    cycle_id: int,
+    start_date,
+    end_date,
+    exclude_plan_ids: set | None = None,
+) -> bool:
+    qs = FeedingPlan.objects.filter(
+        cycle_id=cycle_id,
+        deleted_at__isnull=True,
+        start_date__lte=end_date,
+        end_date__gte=start_date,
+    )
+    if exclude_plan_ids:
+        qs = qs.exclude(pk__in=exclude_plan_ids)
+    return qs.exists()
 
 
 def _validate_feeding_plan_business_rules(
@@ -20,8 +39,21 @@ def _validate_feeding_plan_business_rules(
     end_date,
 ):
     errors = {}
+    try:
+        Farm.objects.get(pk=farm_id, deleted_at__isnull=True)
+    except Farm.DoesNotExist:
+        errors["farm"] = "La granja no existe o no está disponible."
+
     if cycle.deleted_at:
         errors["cycle"] = "El ciclo no está disponible."
+    if getattr(cycle, "farm", None) and cycle.farm.deleted_at:
+        errors["cycle"] = "La granja asociada al ciclo no está disponible."
+    if schedule.deleted_at is not None:
+        errors["feeding_schedule"] = "El cronograma no está disponible."
+    if getattr(schedule, "farm", None) and schedule.farm.deleted_at:
+        errors["feeding_schedule"] = (
+            "La granja asociada al cronograma no está disponible."
+        )
     if cycle.farm_id != farm_id:
         errors["cycle"] = "El ciclo debe pertenecer a la misma granja."
     if schedule.farm_id != farm_id:
@@ -549,18 +581,19 @@ class FeedingPlanSerializer(serializers.ModelSerializer):
             end_date=end,
         )
 
-        if FeedingPlan.objects.filter(
-            cycle=cycle,
-            deleted_at__isnull=True,
-        ).exists():
+        if _active_plan_date_overlap(
+            cycle_id=cycle.pk,
+            start_date=start,
+            end_date=end,
+        ):
             raise serializers.ValidationError(
                 {
-                    "cycle": (
-                        "Ya existe un plan de alimentación vigente para este ciclo. "
-                        "Para cambiarlo, use PATCH sobre ese plan: se creará uno nuevo, se "
-                        "archivará el anterior y se conservará el historial de eventos "
-                        "ejecutados u omitidos."
-                    )
+                    "start_date": (
+                        "Las fechas se solapan con otro plan vigente del mismo ciclo."
+                    ),
+                    "end_date": (
+                        "Las fechas se solapan con otro plan vigente del mismo ciclo."
+                    ),
                 }
             )
 
@@ -571,17 +604,6 @@ class FeedingPlanSerializer(serializers.ModelSerializer):
         cycle = validated_data["cycle"]
         with transaction.atomic():
             Cycle.objects.select_for_update().get(pk=cycle.pk)
-            if FeedingPlan.objects.filter(
-                cycle=cycle,
-                deleted_at__isnull=True,
-            ).exists():
-                raise serializers.ValidationError(
-                    {
-                        "cycle": (
-                            "Ya existe un plan de alimentación vigente para este ciclo."
-                        )
-                    }
-                )
             plan = super().create(validated_data)
             create_feeding_events_for_plan(plan)
         return plan
@@ -589,54 +611,39 @@ class FeedingPlanSerializer(serializers.ModelSerializer):
 
 class FeedingPlanReplaceSerializer(serializers.Serializer):
     cycle = serializers.PrimaryKeyRelatedField(
-        queryset=Cycle.objects.select_related("farm", "specie").all(),
-        required=False,
+        queryset=Cycle.objects.filter(deleted_at__isnull=True).select_related(
+            "farm", "specie"
+        ),
     )
     feeding_schedule = serializers.PrimaryKeyRelatedField(
         queryset=FeedingSchedule.objects.filter(
             deleted_at__isnull=True,
             is_current=True,
-        ).select_related(
-            "farm", "specie"
-        ),
-        required=False,
+        ).select_related("farm", "specie"),
     )
-    start_date = serializers.DateField(required=False)
-    end_date = serializers.DateField(required=False)
+    start_date = serializers.DateField()
+    end_date = serializers.DateField()
 
     def validate(self, data):
         old: FeedingPlan = self.context["plan"]
         farm_id = self.context["farm_id"]
-        if not data:
+
+        if feeding_plan_lifecycle_state(old) == "finished":
             raise serializers.ValidationError(
-                "Debe enviar al menos uno de: cycle, feeding_schedule, "
-                "start_date, end_date."
+                "No se puede modificar un plan cuya fecha de fin ya pasó."
             )
 
-        cycle_obj = data.get("cycle", old.cycle)
-        schedule_obj = data.get("feeding_schedule", old.feeding_schedule)
-        start = data.get("start_date", old.start_date)
-        end = data.get("end_date", old.end_date)
+        cycle_obj = Cycle.objects.select_related("farm", "specie").get(
+            pk=data["cycle"].pk
+        )
+        schedule_obj = FeedingSchedule.objects.select_related("farm", "specie").get(
+            pk=data["feeding_schedule"].pk,
+            deleted_at__isnull=True,
+            is_current=True,
+        )
 
-        try:
-            cycle_obj = Cycle.objects.select_related("farm", "specie").get(
-                pk=cycle_obj.pk
-            )
-        except Cycle.DoesNotExist:
-            raise serializers.ValidationError({"cycle": "Ciclo no encontrado."})
-
-        try:
-            schedule_obj = FeedingSchedule.objects.select_related(
-                "farm", "specie"
-            ).get(
-                pk=schedule_obj.pk,
-                deleted_at__isnull=True,
-                is_current=True,
-            )
-        except FeedingSchedule.DoesNotExist:
-            raise serializers.ValidationError(
-                {"feeding_schedule": "Cronograma no encontrado o no disponible."}
-            )
+        start = data["start_date"]
+        end = data["end_date"]
 
         _validate_feeding_plan_business_rules(
             farm_id=farm_id,
@@ -645,6 +652,57 @@ class FeedingPlanReplaceSerializer(serializers.Serializer):
             start_date=start,
             end_date=end,
         )
+
+        state = feeding_plan_lifecycle_state(old)
+        if state == "in_progress":
+            last_ev = (
+                FeedingEvent.objects.filter(
+                    feeding_plan_id=old.pk,
+                    status__in=(
+                        FeedingEvent.Status.COMPLETED,
+                        FeedingEvent.Status.SKIPPED,
+                    ),
+                )
+                .order_by("-date", "-scheduled_time", "-ration_number")
+                .first()
+            )
+            if last_ev is None:
+                raise serializers.ValidationError(
+                    {
+                        "non_field_errors": [
+                            "Para actualizar un plan en curso debe existir al menos un "
+                            "evento de alimentación marcado como completado u omitido. "
+                            "Mantenga los eventos del plan al día con la operación real "
+                            "(raciones ya ejecutadas u omitidas) y vuelva a intentar."
+                        ]
+                    }
+                )
+            if start <= last_ev.date:
+                raise serializers.ValidationError(
+                    {
+                        "start_date": (
+                            "La fecha de inicio del nuevo plan debe ser posterior al día "
+                            "del último evento completado u omitido."
+                        )
+                    }
+                )
+
+        if _active_plan_date_overlap(
+            cycle_id=cycle_obj.pk,
+            start_date=start,
+            end_date=end,
+            exclude_plan_ids={old.pk},
+        ):
+            raise serializers.ValidationError(
+                {
+                    "start_date": (
+                        "Las fechas se solapan con otro plan vigente del mismo ciclo."
+                    ),
+                    "end_date": (
+                        "Las fechas se solapan con otro plan vigente del mismo ciclo."
+                    ),
+                }
+            )
 
         return {
             "cycle": cycle_obj,
