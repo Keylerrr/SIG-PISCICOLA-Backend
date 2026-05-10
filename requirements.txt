@@ -9,3 +9,4 @@ django-cors-headers>=4.3
 python-dotenv
 gunicorn
 drf-spectacular
+resend
