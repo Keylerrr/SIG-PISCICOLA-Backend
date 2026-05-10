@@ -183,15 +183,28 @@ class SpecieFeedingReferenceSerializer(serializers.ModelSerializer):
         gain_min = data.get("reference_daily_gain_g_min", getattr(self.instance, "reference_daily_gain_g_min", None))
         gain_max = data.get("reference_daily_gain_g_max", getattr(self.instance, "reference_daily_gain_g_max", None))
         stage = data.get("stage", getattr(self.instance, "stage", None))
+        feed_form = data.get(
+            "recommended_feed_form",
+            getattr(self.instance, "recommended_feed_form", None),
+        )
         specie = self.context.get("specie")
 
-        if specie and stage:
-            qs = SpecieFeedingReference.objects.filter(specie=specie, stage=stage)
+        if specie and stage and feed_form:
+            qs = SpecieFeedingReference.objects.filter(
+                specie=specie,
+                stage=stage,
+                recommended_feed_form=feed_form,
+            )
             if self.instance:
                 qs = qs.exclude(pk=self.instance.pk)
             if qs.exists():
                 raise serializers.ValidationError(
-                    {"stage": "Esta especie ya tiene una referencia de alimentación para esta etapa."}
+                    {
+                        "recommended_feed_form": (
+                            "Esta especie ya tiene una referencia de alimentación "
+                            "para esta etapa y esta forma de alimento."
+                        )
+                    }
                 )
 
         if min_w is not None and max_w is not None and min_w > max_w:
