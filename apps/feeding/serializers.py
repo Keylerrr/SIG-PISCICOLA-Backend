@@ -9,25 +9,11 @@ from apps.species.models import Specie, SpecieFeedingReference
 
 from .constants import FEED_SCHEDULE_PRODUCT_TYPE_NAMES, MINUTES_PER_DAY
 from .models import FeedingEvent, FeedingPlan, FeedingSchedule
-from .utils import create_feeding_events_for_plan, feeding_plan_lifecycle_state
-
-
-def _active_plan_date_overlap(
-    *,
-    cycle_id: int,
-    start_date,
-    end_date,
-    exclude_plan_ids: set | None = None,
-) -> bool:
-    qs = FeedingPlan.objects.filter(
-        cycle_id=cycle_id,
-        deleted_at__isnull=True,
-        start_date__lte=end_date,
-        end_date__gte=start_date,
-    )
-    if exclude_plan_ids:
-        qs = qs.exclude(pk__in=exclude_plan_ids)
-    return qs.exists()
+from .utils import (
+    active_plan_date_overlap,
+    create_feeding_events_for_plan,
+    feeding_plan_lifecycle_state,
+)
 
 
 def _validate_feeding_plan_business_rules(
@@ -581,7 +567,7 @@ class FeedingPlanSerializer(serializers.ModelSerializer):
             end_date=end,
         )
 
-        if _active_plan_date_overlap(
+        if active_plan_date_overlap(
             cycle_id=cycle.pk,
             start_date=start,
             end_date=end,
@@ -604,6 +590,21 @@ class FeedingPlanSerializer(serializers.ModelSerializer):
         cycle = validated_data["cycle"]
         with transaction.atomic():
             Cycle.objects.select_for_update().get(pk=cycle.pk)
+            if active_plan_date_overlap(
+                cycle_id=cycle.pk,
+                start_date=validated_data["start_date"],
+                end_date=validated_data["end_date"],
+            ):
+                raise serializers.ValidationError(
+                    {
+                        "start_date": (
+                            "Las fechas se solapan con otro plan vigente del mismo ciclo."
+                        ),
+                        "end_date": (
+                            "Las fechas se solapan con otro plan vigente del mismo ciclo."
+                        ),
+                    }
+                )
             plan = super().create(validated_data)
             create_feeding_events_for_plan(plan)
         return plan
@@ -687,7 +688,7 @@ class FeedingPlanReplaceSerializer(serializers.Serializer):
                     }
                 )
 
-        if _active_plan_date_overlap(
+        if active_plan_date_overlap(
             cycle_id=cycle_obj.pk,
             start_date=start,
             end_date=end,

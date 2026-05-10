@@ -5,6 +5,7 @@ from .views import (
     FeedingEventListView,
     FeedingPlanDetailView,
     FeedingPlanListCreateView,
+    FeedingPlanOccupiedRangesView,
     FeedingScheduleDetailView,
     FeedingScheduleListCreateView,
     FeedingScheduleVersionsListView,
@@ -26,6 +27,10 @@ urlpatterns = [
     path(
         "farms/<int:farm_id>/feeding-plans/",
         FeedingPlanListCreateView.as_view(),
+    ),
+    path(
+        "farms/<int:farm_id>/feeding-plans/occupied-ranges/",
+        FeedingPlanOccupiedRangesView.as_view(),
     ),
     path(
         "farms/<int:farm_id>/feeding-plans/<int:plan_id>/",

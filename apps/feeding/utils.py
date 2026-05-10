@@ -11,6 +11,24 @@ from apps.cycle.models import Cycle
 from .models import FeedingEvent, FeedingPlan, FeedingSchedule
 
 
+def active_plan_date_overlap(
+    *,
+    cycle_id: int,
+    start_date,
+    end_date,
+    exclude_plan_ids: set | None = None,
+) -> bool:
+    qs = FeedingPlan.objects.filter(
+        cycle_id=cycle_id,
+        deleted_at__isnull=True,
+        start_date__lte=end_date,
+        end_date__gte=start_date,
+    )
+    if exclude_plan_ids:
+        qs = qs.exclude(pk__in=exclude_plan_ids)
+    return qs.exists()
+
+
 def feeding_plan_lifecycle_state(plan: FeedingPlan, today=None):
     """``finished`` | ``in_progress`` | ``scheduled`` según la fecha actual (timezone)."""
     today = today or timezone.now().date()
@@ -132,6 +150,7 @@ def update_in_progress_feeding_plan(
             feeding_schedule=feeding_schedule,
             start_date=start_date,
             end_date=end_date,
+            exclude_plan_ids={locked_old.pk},
         )
     return new_plan
 
@@ -159,6 +178,16 @@ def update_scheduled_feeding_plan(
         if locked.farm_id != farm_id:
             raise ValueError("Inconsistencia de granja del plan.")
 
+        if active_plan_date_overlap(
+            cycle_id=cycle.pk,
+            start_date=start_date,
+            end_date=end_date,
+            exclude_plan_ids={locked.pk},
+        ):
+            raise ValueError(
+                "Las fechas se solapan con otro plan vigente del mismo ciclo."
+            )
+
         # Mismo criterio: solo eventos se borran en BD; el plan se actualiza abajo.
         FeedingEvent.objects.filter(feeding_plan_id=locked.pk).delete()
         locked.cycle_id = cycle.pk
@@ -184,9 +213,19 @@ def _create_plan_with_events_locked(
     feeding_schedule: FeedingSchedule,
     start_date,
     end_date,
+    exclude_plan_ids: set | None = None,
 ) -> FeedingPlan:
     """Crea fila ``FeedingPlan`` y sus eventos; bloquea el ciclo destino (misma transacción)."""
     Cycle.objects.select_for_update().get(pk=cycle.pk)
+    if active_plan_date_overlap(
+        cycle_id=cycle.pk,
+        start_date=start_date,
+        end_date=end_date,
+        exclude_plan_ids=exclude_plan_ids,
+    ):
+        raise ValueError(
+            "Las fechas se solapan con otro plan vigente del mismo ciclo."
+        )
     plan = FeedingPlan.objects.create(
         farm_id=farm_id,
         cycle=cycle,

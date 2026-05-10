@@ -284,6 +284,60 @@ class FeedingPlanListCreateView(APIView):
         )
 
 
+class FeedingPlanOccupiedRangesView(APIView):
+
+    def get_permissions(self):
+        return [AdminOr(IsFarmMember)()]
+
+    def get(self, request, farm_id):
+        if not _get_farm(farm_id):
+            return _farm_not_found_response()
+
+        cycle_param = request.query_params.get("cycle")
+        if cycle_param is None or str(cycle_param).strip() == "":
+            return Response(
+                {
+                    "detail": (
+                        "Se requiere el parámetro de consulta «cycle» (id del ciclo)."
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            cycle_id = int(cycle_param)
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "El parámetro «cycle» debe ser un entero."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        Cycle = apps.get_model("cycle", "Cycle")
+        try:
+            cycle = Cycle.objects.get(pk=cycle_id, deleted_at__isnull=True)
+        except Cycle.DoesNotExist:
+            return Response(
+                {"detail": "Ciclo no encontrado."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if cycle.farm_id != farm_id:
+            return Response(
+                {"detail": "El ciclo no pertenece a esta granja."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        qs = (
+            FeedingPlan.objects.filter(
+                farm_id=farm_id,
+                cycle_id=cycle_id,
+                deleted_at__isnull=True,
+            )
+            .order_by("start_date", "pk")
+            .values("start_date", "end_date")
+        )
+        ranges = list(qs)
+        return Response({"cycle": cycle_id, "ranges": ranges})
+
+
 class FeedingPlanDetailView(APIView):
 
     def get_permissions(self):
