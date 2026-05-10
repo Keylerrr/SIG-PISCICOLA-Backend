@@ -53,6 +53,35 @@ def _schedule_not_found_response():
     )
 
 
+def _bad_request(detail: str):
+    return Response({"detail": detail}, status=status.HTTP_400_BAD_REQUEST)
+
+
+def _parse_optional_id(params, key: str):
+    raw = params.get(key)
+    if raw is None or raw == "":
+        return None, None
+    try:
+        v = int(raw)
+    except (TypeError, ValueError):
+        return None, _bad_request(f"Parámetro '{key}' debe ser un entero válido.")
+    if v < 1:
+        return None, _bad_request(f"Parámetro '{key}' debe ser mayor a 0.")
+    return v, None
+
+
+def _parse_schedule_type_param(params):
+    raw = params.get("type")
+    if raw is None or raw == "":
+        return None, None
+    valid = {c[0] for c in FeedingSchedule.Stage.choices}
+    if raw not in valid:
+        return None, _bad_request(
+            f"Parámetro 'type' inválido. Valores: {', '.join(sorted(valid))}."
+        )
+    return raw, None
+
+
 class FeedingScheduleListCreateView(APIView):
 
     def get_permissions(self):
@@ -64,6 +93,17 @@ class FeedingScheduleListCreateView(APIView):
         farm = _get_farm(farm_id)
         if not farm:
             return _farm_not_found_response()
+
+        specie_id, err = _parse_optional_id(request.query_params, "specie")
+        if err:
+            return err
+        product_id, err = _parse_optional_id(request.query_params, "product")
+        if err:
+            return err
+        schedule_type, err = _parse_schedule_type_param(request.query_params)
+        if err:
+            return err
+
         qs = (
             FeedingSchedule.objects.filter(
                 farm=farm,
@@ -71,8 +111,15 @@ class FeedingScheduleListCreateView(APIView):
                 is_current=True,
             )
             .select_related("product", "specie", "parent")
-            .order_by("-updated_at")
         )
+        if specie_id is not None:
+            qs = qs.filter(specie_id=specie_id)
+        if product_id is not None:
+            qs = qs.filter(product_id=product_id)
+        if schedule_type is not None:
+            qs = qs.filter(type=schedule_type)
+
+        qs = qs.order_by("-created_at")
         return Response(FeedingScheduleSerializer(qs, many=True).data)
 
     def post(self, request, farm_id):
@@ -159,7 +206,7 @@ class FeedingScheduleDetailView(APIView):
 
 
 class FeedingScheduleVersionsListView(APIView):
-    
+
     def get_permissions(self):
         return [AdminOr(IsFarmMember)()]
 
