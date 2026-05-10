@@ -6,7 +6,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
 
-from apps.cycle.models import Cycle
+from apps.cycle.models import Cycle, CycleBatch
 
 from .models import FeedingEvent, FeedingPlan, FeedingSchedule
 
@@ -39,12 +39,68 @@ def feeding_plan_lifecycle_state(plan: FeedingPlan, today=None):
     return "scheduled"
 
 
+def cycle_fish_count_and_avg_weight_g(cycle_id: int) -> tuple[Decimal, Decimal] | None:
+    """
+    Cantidad total de peces y peso promedio (g) ponderado por lote ``CycleBatch``.
+    Sin lotes o sin ejemplares → None.
+    """
+    rows = list(
+        CycleBatch.objects.filter(cycle_id=cycle_id).values_list(
+            "quantity", "avg_weight_g"
+        )
+    )
+    if not rows:
+        return None
+    total_fish = sum(int(q) for q, _ in rows)
+    if total_fish <= 0:
+        return None
+    weighted = sum(Decimal(q) * Decimal(str(w)) for q, w in rows)
+    avg_g = weighted / Decimal(total_fish)
+    return Decimal(total_fish), avg_g
+
+
+def planned_feed_quantity_per_ration(
+    fish_count: Decimal,
+    avg_weight_g: Decimal,
+    feeding_rate_percentage: Decimal,
+    times_per_day: int,
+) -> Decimal:
+    """
+    Ración planificada por toma (misma unidad que la ración diaria: kg de alimento
+    si ``peso_promedio`` está en gramos por pez, coherente con alimento en kg).
+
+    Fórmula de negocio (peso promedio en g por pez):
+
+    - Biomasa = (cantidad de peces × peso promedio) / 1000
+    - Relación diaria = (Biomasa × feeding_rate) / 100
+    - Ración por toma (quantity) = relación diaria / veces al día
+    """
+    if times_per_day < 1:
+        return Decimal("0").quantize(Decimal("0.01"))
+    biomasa = (fish_count * avg_weight_g) / Decimal("1000")
+    relacion_diaria = (biomasa * feeding_rate_percentage) / Decimal("100")
+    racion_por_toma = relacion_diaria / Decimal(times_per_day)
+    return racion_por_toma.quantize(Decimal("0.01"))
+
+
 def create_feeding_events_for_plan(plan: FeedingPlan) -> int:
-    """Crea eventos ``SCHEDULED`` del plan según su ``FeedingSchedule``; devuelve cantidad creada."""
+    """Crea eventos ``SCHEDULED``; ``planned_quantity`` con la fórmula biomasa / tasa / tomas del día."""
     schedule = FeedingSchedule.objects.select_related("product").get(
         pk=plan.feeding_schedule_id
     )
     unit_id = schedule.product.unit_id
+
+    stock = cycle_fish_count_and_avg_weight_g(plan.cycle_id)
+    if stock is not None:
+        fish_count, avg_g = stock
+        planned_qty = planned_feed_quantity_per_ration(
+            fish_count,
+            avg_g,
+            Decimal(str(schedule.feeding_rate_percentage)),
+            schedule.times_per_day,
+        )
+    else:
+        planned_qty = Decimal("0")
 
     day_stride = schedule.gap_between_completed_day + 1
     first_ration_time = time(0, 0)
@@ -67,7 +123,7 @@ def create_feeding_events_for_plan(plan: FeedingPlan) -> int:
                         date=st.date(),
                         scheduled_time=st.time(),
                         ration_number=ration_number,
-                        planned_quantity=Decimal("0"),
+                        planned_quantity=planned_qty,
                         planned_unit_id=unit_id,
                         status=FeedingEvent.Status.SCHEDULED,
                     )
@@ -164,10 +220,6 @@ def update_scheduled_feeding_plan(
     start_date,
     end_date,
 ) -> FeedingPlan:
-    """Elimina en BD los eventos del plan, actualiza el mismo registro y vuelve a generar eventos.
-
-    Solo si hoy es anterior a ``start_date`` del plan bloqueado.
-    """
     with transaction.atomic():
         locked = FeedingPlan.objects.select_for_update().get(pk=plan.pk)
         today = timezone.now().date()
