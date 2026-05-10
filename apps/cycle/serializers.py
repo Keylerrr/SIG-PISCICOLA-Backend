@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from datetime import date
 
-from .models import ProductionPlan, Cycle, CycleBatch
+from .models import ProductionPlan, Cycle, CyclePondBatch
 
 
 class ProductionPlanSerializer(serializers.ModelSerializer):
@@ -82,7 +82,6 @@ class CycleSerializer(serializers.ModelSerializer):
             "id",
             "farm",
             "specie",
-            "pond",
             "production_plan",
             "name",
             "start_date",
@@ -100,7 +99,8 @@ class CycleSerializer(serializers.ModelSerializer):
         read_only_fields = ["created_at", "updated_at"]
 
     def validate(self, data):
-        pond = data.get("pond") or (self.instance.pond if self.instance else None)
+        from apps.batch.models import Batch
+        
         farm = data.get("farm") or (self.instance.farm if self.instance else None)
         specie = data.get("specie") or (self.instance.specie if self.instance else None)
         production_plan = data.get("production_plan") or (self.instance.production_plan if self.instance else None)
@@ -108,12 +108,6 @@ class CycleSerializer(serializers.ModelSerializer):
         start_date = data.get("start_date") or (self.instance.start_date if self.instance else None)
         estimated_finish_date = data.get("estimated_finish_date") or (self.instance.estimated_finish_date if self.instance else None)
         finish_date = data.get("finish_date")
-
-        BLOCKED_STATUSES = ["inactive", "cleaning"]
-        if pond and pond.status in BLOCKED_STATUSES:
-            raise serializers.ValidationError(
-                f"No se puede crear ni editar un ciclo en un estanque con estado '{pond.get_status_display()}'."
-            )
 
         if production_plan and farm and production_plan.farm_id != farm.id:
             raise serializers.ValidationError({
@@ -125,21 +119,17 @@ class CycleSerializer(serializers.ModelSerializer):
                 "production_plan": "La especie del plan debe coincidir con la especie del ciclo."
             })
 
-        if specie and farm and specie.farm_id != farm.id:
-            raise serializers.ValidationError({
-                "specie": "La especie debe pertenecer a la misma granja."
-            })
-
         if state == Cycle.State.IN_PROGRESS:
             ciclo_activo = Cycle.objects.filter(
-                pond=pond,
+                farm=farm,
+                specie=specie,
                 state=Cycle.State.IN_PROGRESS,
                 deleted_at__isnull=True
             ).exclude(pk=self.instance.pk if self.instance else None).exists()
 
             if ciclo_activo:
                 raise serializers.ValidationError(
-                    f"El estanque '{pond.name}' ya tiene un ciclo en progreso."
+                    "Ya existe un ciclo activo para esta especie en esta granja. No se pueden crear dos ciclos activos simultáneamente."
                 )
 
         if start_date and estimated_finish_date:
@@ -172,9 +162,9 @@ class CycleSerializer(serializers.ModelSerializer):
         return data
 
 
-class CycleBatchSerializer(serializers.ModelSerializer):
+class CyclePondBatchSerializer(serializers.ModelSerializer):
     class Meta:
-        model = CycleBatch
+        model = CyclePondBatch
         fields = [
             "id",
             "cycle",
@@ -209,15 +199,32 @@ class CycleBatchSerializer(serializers.ModelSerializer):
                 "cycle": "Solo se pueden agregar lotes a ciclos en progreso."
             })
 
+        if pond_batch and pond_batch.end_date is not None:
+            raise serializers.ValidationError({
+                "pond_batch": "El PondBatch ya no está activo en el estanque (end_date no es nulo). "
+                             "Solo se pueden agregar lotes actualmente presentes en el estanque."
+            })
+
         if cycle and pond_batch:
-            if pond_batch.batch.specie != cycle.specie:
+            batch = pond_batch.batch
+            
+            if batch.specie != cycle.specie:
                 raise serializers.ValidationError({
                     "pond_batch": "La especie del lote no coincide con la especie del ciclo."
                 })
 
-            if pond_batch.batch.farm_id != cycle.farm_id:
+            if batch.farm_id != cycle.farm_id:
                 raise serializers.ValidationError({
                     "pond_batch": "El lote debe pertenecer a la misma granja del ciclo."
                 })
+
+            # Validar que todos los batches del ciclo estén en la misma etapa biológica
+            cycle_batches = CyclePondBatch.objects.filter(cycle=cycle)
+            if cycle_batches.exists():
+                other_batch_biological_state = cycle_batches.first().pond_batch.batch.biological_state
+                if batch.biological_state != other_batch_biological_state:
+                    raise serializers.ValidationError({
+                        "pond_batch": f"Todos los lotes del ciclo deben estar en la misma etapa biológica ({other_batch_biological_state}). Este lote está en {batch.biological_state}."
+                    })
 
         return data
