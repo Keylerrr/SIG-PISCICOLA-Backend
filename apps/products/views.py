@@ -68,7 +68,8 @@ class ProductViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="stock")
     def stock_list(self, request, farm_pk=None):
-        products = self.get_queryset().annotate_stock()  # ver nota abajo
+
+        products = self.get_queryset()
         data = [
             {
                 "product_id": p.id,

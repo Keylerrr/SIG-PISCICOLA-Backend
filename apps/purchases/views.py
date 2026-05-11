@@ -1,3 +1,4 @@
+# views.py
 from rest_framework import status, viewsets
 from rest_framework.response import Response
 
@@ -16,9 +17,7 @@ class BuyViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ("list", "retrieve"):
             return [AdminOr(IsFarmMember)()]
-        return [
-            AdminOr(CanManageInventory)()
-        ] 
+        return [AdminOr(CanManageInventory)()]
 
     def get_queryset(self):
         qs = (
