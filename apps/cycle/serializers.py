@@ -2,6 +2,75 @@ from rest_framework import serializers
 from datetime import date
 
 from .models import ProductionPlan, Cycle, CyclePondBatch
+from apps.batch.models import Batch, PondBatch
+from apps.ponds.models import Pond
+from apps.species.models import Specie
+
+
+# Nested serializers para visualización detallada
+
+
+class SpecieMinimalSerializer(serializers.ModelSerializer):
+    """Serializer mínimo de Especie para usar en contextos anidados"""
+    class Meta:
+        model = Specie
+        fields = ["id", "name"]
+
+
+class BatchDetailSerializer(serializers.ModelSerializer):
+    """Serializer detallado de Batch con información de la especie"""
+    specie = SpecieMinimalSerializer(read_only=True)
+
+    class Meta:
+        model = Batch
+        fields = [
+            "id",
+            "code",
+            "specie",
+            "biological_state",
+            "status",
+            "origin_type",
+            "initial_quantity",
+            "min_weight_g",
+            "avg_weight_g",
+            "max_weight_g",
+            "comments",
+        ]
+
+
+class PondDetailSerializer(serializers.ModelSerializer):
+    """Serializer detallado de Estanque"""
+    class Meta:
+        model = Pond
+        fields = [
+            "id",
+            "code",
+            "name",
+            "status",
+            "type",
+            "capacity",
+            "area",
+            "volume",
+            "depth",
+        ]
+
+
+class PondBatchDetailSerializer(serializers.ModelSerializer):
+    """Serializer detallado de PondBatch con batch y estanque anidados"""
+    batch = BatchDetailSerializer(read_only=True)
+    pond = PondDetailSerializer(read_only=True)
+
+    class Meta:
+        model = PondBatch
+        fields = [
+            "id",
+            "batch",
+            "pond",
+            "initial_quantity",
+            "current_quantity",
+            "start_date",
+            "end_date",
+        ]
 
 
 class ProductionPlanSerializer(serializers.ModelSerializer):
@@ -163,6 +232,8 @@ class CycleSerializer(serializers.ModelSerializer):
 
 
 class CyclePondBatchSerializer(serializers.ModelSerializer):
+    pond_batch = PondBatchDetailSerializer(read_only=True)
+
     class Meta:
         model = CyclePondBatch
         fields = [

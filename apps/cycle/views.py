@@ -74,9 +74,23 @@ class CyclePondBatchViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")
-        return CyclePondBatch.objects.filter(
+        cycle_id = self.kwargs.get("cycle_pk")
+        
+        queryset = CyclePondBatch.objects.filter(
             cycle__farm_id=farm_id
-        ).select_related("cycle", "pond_batch").order_by("-id")
+        ).select_related(
+            "cycle",
+            "pond_batch",
+            "pond_batch__batch",
+            "pond_batch__batch__specie",
+            "pond_batch__pond",
+        ).order_by("-id")
+        
+        # Si viene cycle_pk en la URL, filtra por ese ciclo específico
+        if cycle_id:
+            queryset = queryset.filter(cycle_id=cycle_id)
+        
+        return queryset
 
     def perform_create(self, serializer):
         serializer.save()

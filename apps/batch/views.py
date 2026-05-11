@@ -26,6 +26,29 @@ class BatchViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")
         qs = Batch.objects.filter(farm_id=farm_id)
+
+        pond_param = self.request.query_params.get("pond")
+        if pond_param is not None:
+            try:
+                pond_id = int(pond_param)
+            except (TypeError, ValueError):
+                raise ValidationError(
+                    {"pond": "Debe ser un id entero válido."},
+                )
+            pond_batches = PondBatch.objects.filter(
+                batch_id=OuterRef("pk"),
+                pond_id=pond_id,
+                pond__farm_id=farm_id,
+            )
+            activos = self.request.query_params.get("activos")
+            if activos is not None and str(activos).lower() in (
+                "true",
+                "1",
+                "yes",
+            ):
+                pond_batches = pond_batches.filter(end_date__isnull=True)
+            qs = qs.filter(Exists(pond_batches))
+
         sin_estanque = self.request.query_params.get("sin_estanque")
         if sin_estanque is not None and str(sin_estanque).lower() in (
             "true",
