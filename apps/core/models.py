@@ -97,3 +97,71 @@ class AuditLog(models.Model):
 
     def __str__(self):
         return f"[{self.type_source}] {self.description} - {self.created_at}"
+
+
+class Alert(models.Model):
+    class SourceType(models.TextChoices):
+        HEALTH = "Health", "Salud"
+        STOCK = "Stock", "Stock"
+        AMBIENTAL = "Ambiental", "Ambiental"
+        CONTROL = "Control", "Control"
+        FEEDING = "Feeding", "Alimentación"
+
+    class Severity(models.TextChoices):
+        LOW = "low", "Baja"
+        MEDIUM = "medium", "Media"
+        HIGH = "high", "Alta"
+        CRITICAL = "critical", "Crítica"
+
+    farm = models.ForeignKey(
+        "farms.Farm", on_delete=models.CASCADE, related_name="alerts"
+    )
+    pond = models.ForeignKey(
+        "ponds.Pond",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="alerts",
+    )
+    cycle = models.ForeignKey(
+        "cycle.Cycle",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="alerts",
+    )
+
+    source_type = models.CharField(max_length=20, choices=SourceType.choices)
+    source_id = models.PositiveIntegerField(null=True, blank=True)
+
+    description = models.TextField()
+    message = models.TextField()
+    value = models.FloatField(null=True, blank=True)
+    threshold = models.FloatField(null=True, blank=True)
+    severity = models.CharField(
+        max_length=10, choices=Severity.choices, default=Severity.MEDIUM
+    )
+
+    is_resolved = models.BooleanField(default=False)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="resolved_alerts",
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "alert"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["farm", "is_resolved"]),
+            models.Index(fields=["source_type", "source_id"]),
+            models.Index(fields=["severity"]),
+        ]
+
+    def __str__(self):
+        return f"[{self.severity}] {self.source_type} - {self.farm} ({self.created_at:%Y-%m-%d})"
