@@ -59,6 +59,19 @@ class CycleViewSet(viewsets.ModelViewSet):
 
     def destroy(self, request, *args, **kwargs):
         cycle = self.get_object()
+        
+        # Verificar si hay lotes activos vinculados al ciclo
+        active_batches = CyclePondBatch.objects.filter(
+            cycle=cycle,
+            pond_batch__end_date__isnull=True
+        ).exists()
+        
+        if active_batches:
+            return Response(
+                {"detail": "No se puede borrar un ciclo que tiene lotes activos. Finaliza los lotes primero."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         cycle.deleted_at = timezone.now()
         cycle.save(update_fields=["deleted_at"])
         return Response(status=status.HTTP_204_NO_CONTENT)
