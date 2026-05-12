@@ -9,5 +9,5 @@ router.register(r"auditlog", AuditLogView)
 router.register(r"alerts", AlertViewSet, basename="alert")
 
 urlpatterns = [
-    path("farms/<int:farm_pk>/", include(router.urls)),
+    path("farms/core/<int:farm_pk>/", include(router.urls)),
 ]
