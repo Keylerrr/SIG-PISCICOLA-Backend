@@ -93,9 +93,22 @@ class ProductionPlanSerializer(serializers.ModelSerializer):
             "updated_at",
             "deleted_at",
         ]
-        read_only_fields = ["version", "is_current", "parent", "created_at", "updated_at"]
+        read_only_fields = [
+            "farm",
+            "version",
+            "is_current",
+            "parent",
+            "created_at",
+            "updated_at",
+            "deleted_at",
+        ]
 
     def validate(self, data):
+        if self.instance is not None and "specie" in data:
+            raise serializers.ValidationError({
+                "specie": "La especie no se puede cambiar al versionar un plan de producción."
+            })
+
         expected_mortality_rate = data.get("expected_mortality_rate")
         expected_final_weight = data.get("expected_final_weight")
 
@@ -187,6 +200,11 @@ class CycleSerializer(serializers.ModelSerializer):
         if production_plan and specie and production_plan.specie_id != specie.id:
             raise serializers.ValidationError({
                 "production_plan": "La especie del plan debe coincidir con la especie del ciclo."
+            })
+
+        if production_plan is not None and production_plan.deleted_at is not None:
+            raise serializers.ValidationError({
+                "production_plan": "El plan de producción no está disponible (ha sido eliminado)."
             })
 
         if state == Cycle.State.IN_PROGRESS:
