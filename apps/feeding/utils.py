@@ -7,8 +7,56 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.cycle.models import Cycle, CyclePondBatch
+from apps.purchases.models import InventoryMovement
+from apps.purchases.utils import create_out_movement
 
 from .models import FeedingEvent, FeedingPlan, FeedingSchedule
+
+
+_MASS_GRAMS_PER_UNIT_SYMBOL = {
+    "mg": Decimal("0.001"),
+    "g": Decimal("1"),
+    "gr": Decimal("1"),
+    "kg": Decimal("1000"),
+    "t": Decimal("1000000"),
+    "ton": Decimal("1000000"),
+}
+
+
+def _mass_grams_per_unit_symbol(unit) -> Decimal | None:
+    if unit is None:
+        return None
+    key = (getattr(unit, "symbol", None) or "").strip().lower()
+    return _MASS_GRAMS_PER_UNIT_SYMBOL.get(key)
+
+
+def quantity_in_product_unit(
+    quantity: Decimal,
+    from_unit,
+    to_unit,
+) -> Decimal:
+    """
+    Convierte una cantidad de masa desde ``from_unit`` hacia ``to_unit`` (unidad del producto).
+
+    Si las unidades coinciden, devuelve ``quantity``. Si no, usa factores solo para
+    símbolos de masa conocidos (mg, g, kg, t). Si no puede convertir, lanza ``ValueError``.
+    """
+    if from_unit is None or to_unit is None:
+        raise ValueError(
+            "Faltan unidades para alinear la cantidad consumida con el inventario del producto."
+        )
+    if from_unit.pk == to_unit.pk:
+        return quantity
+    g_from = _mass_grams_per_unit_symbol(from_unit)
+    g_to = _mass_grams_per_unit_symbol(to_unit)
+    if g_from is None or g_to is None:
+        raise ValueError(
+            "No se puede convertir entre la unidad indicada y la unidad del producto "
+            f"({getattr(to_unit, 'symbol', '')}). Use la misma unidad que el producto o "
+            "unidades de masa estándar (mg, g, kg, t)."
+        )
+    out = quantity * g_from / g_to
+    return out.quantize(Decimal("0.0001"))
 
 
 def active_plan_date_overlap(
@@ -36,6 +84,38 @@ def feeding_plan_lifecycle_state(plan: FeedingPlan, today=None):
     if plan.start_date <= today <= plan.end_date:
         return "in_progress"
     return "scheduled"
+
+
+def register_feeding_consume(feeding_event: FeedingEvent):
+    try:
+        fe = FeedingEvent.objects.select_related(
+            "farm",
+            "cycle",
+            "cycle__pond",
+            "actual_unit",
+            "feeding_plan__feeding_schedule__product",
+            "feeding_plan__feeding_schedule__product__unit",
+        ).get(pk=feeding_event.pk)
+
+        product = fe.feeding_plan.feeding_schedule.product
+        qty_stock = quantity_in_product_unit(
+            Decimal(str(feeding_event.actual_quantity)),
+            feeding_event.actual_unit,
+            product.unit,
+        )
+        return create_out_movement(
+            farm=fe.farm,
+            product=product,
+            quantity=float(qty_stock),
+            source_type=InventoryMovement.SourceType.FEEDING,
+            source_id=fe.id,
+            pond=fe.cycle.pond,
+            cycle=fe.cycle,
+        )
+    except FeedingEvent.DoesNotExist:
+        raise ValueError("El evento de alimentación no existe.") from None
+    except ValueError:
+        raise
 
 
 def cycle_fish_count_and_avg_weight_g(cycle_id: int) -> tuple[Decimal, Decimal] | None:
@@ -274,3 +354,4 @@ def _create_plan_with_events_locked(
     )
     create_feeding_events_for_plan(plan)
     return plan
+
