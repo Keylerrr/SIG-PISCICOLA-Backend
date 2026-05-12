@@ -281,7 +281,7 @@ class CyclePondBatchSerializer(serializers.ModelSerializer):
         if cycle and pond_batch:
             batch = pond_batch.batch
             
-            if batch.specie != cycle.specie:
+            if batch.specie_id != cycle.specie_id:
                 raise serializers.ValidationError({
                     "pond_batch": "La especie del lote no coincide con la especie del ciclo."
                 })
