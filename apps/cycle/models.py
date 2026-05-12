@@ -46,6 +46,7 @@ class Cycle(models.Model):
     farm = models.ForeignKey("farms.Farm", on_delete=models.CASCADE)
     specie = models.ForeignKey("species.Specie", on_delete=models.CASCADE)
     production_plan = models.ForeignKey(ProductionPlan, on_delete=models.PROTECT)
+    pond = models.ForeignKey("ponds.Pond", on_delete=models.PROTECT, null=True, blank=True)
     name = models.CharField(max_length=150)
     start_date = models.DateField()
     estimated_finish_date = models.DateField()

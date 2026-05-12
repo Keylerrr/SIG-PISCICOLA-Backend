@@ -152,6 +152,7 @@ class CycleSerializer(serializers.ModelSerializer):
             "farm",
             "specie",
             "production_plan",
+            "pond",
             "name",
             "start_date",
             "estimated_finish_date",
@@ -165,7 +166,7 @@ class CycleSerializer(serializers.ModelSerializer):
             "updated_at",
             "deleted_at",
         ]
-        read_only_fields = ["created_at", "updated_at"]
+        read_only_fields = ["pond", "created_at", "updated_at"]
 
     def validate(self, data):
         from apps.batch.models import Batch
