@@ -68,7 +68,7 @@ def send_reset_password_email(email: str, uuidb64: str, token: str) -> None:
     <p>Hola,</p>
 
     <p>Se solicitó un restablecimiento de contraseña. Entra en el siguiente enlace para restaurarla:</p>
-    <p>{settings.HOST_URL}/{uuidb64}/{token}</p>
+    <p>{settings.HOST_URL}/resetPassword/?uid={uuidb64}&token={token}</p>
 
     <p>Si no enviaste esta solicitud, puedes ignorar este correa.</p>
     """

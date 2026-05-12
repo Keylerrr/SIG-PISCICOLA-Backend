@@ -82,7 +82,7 @@ def get_product_stock(product_id: int, farm_id: int) -> float:
 
 @transaction.atomic
 def _maybe_create_batch_from_purchase(detail: PurchaseDetail, batch_data: dict) -> None:
-    from apps.batches.models import Batch
+    from apps.batch.models import Batch
 
     if detail.product.type_product.name.lower() != "lote":
         return
