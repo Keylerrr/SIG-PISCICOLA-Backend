@@ -233,7 +233,7 @@ class CycleSerializer(serializers.ModelSerializer):
 
 
 class CyclePondBatchSerializer(serializers.ModelSerializer):
-    pond_batch = PondBatchDetailSerializer(read_only=True)
+    pond_batch_detail = PondBatchDetailSerializer(source="pond_batch", read_only=True)
 
     class Meta:
         model = CyclePondBatch
@@ -241,6 +241,7 @@ class CyclePondBatchSerializer(serializers.ModelSerializer):
             "id",
             "cycle",
             "pond_batch",
+            "pond_batch_detail",
             "quantity",
             "min_weight_g",
             "avg_weight_g",
