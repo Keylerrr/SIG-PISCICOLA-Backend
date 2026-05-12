@@ -281,6 +281,15 @@ class CyclePondBatchSerializer(serializers.ModelSerializer):
         if cycle and pond_batch:
             batch = pond_batch.batch
             
+            # Validar que el pond_batch no esté ya vinculado al ciclo
+            existing = CyclePondBatch.objects.filter(cycle=cycle, pond_batch=pond_batch)
+            if self.instance:
+                existing = existing.exclude(pk=self.instance.pk)
+            if existing.exists():
+                raise serializers.ValidationError({
+                    "pond_batch": "Este lote ya está vinculado al ciclo."
+                })
+            
             if batch.specie_id != cycle.specie_id:
                 raise serializers.ValidationError({
                     "pond_batch": "La especie del lote no coincide con la especie del ciclo."
