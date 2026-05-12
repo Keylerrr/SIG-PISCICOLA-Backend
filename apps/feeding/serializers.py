@@ -13,6 +13,7 @@ from .utils import (
     active_plan_date_overlap,
     create_feeding_events_for_plan,
     feeding_plan_lifecycle_state,
+    register_feeding_consume,
 )
 
 
@@ -861,10 +862,26 @@ class FeedingEventUpdateSerializer(serializers.ModelSerializer):
             return instance
 
         new_status = validated_data["status"]
-        instance.status = new_status
+
         if new_status == FeedingEvent.Status.COMPLETED:
-            instance.actual_quantity = validated_data["actual_quantity"]
-            instance.actual_unit = validated_data["actual_unit"]
+            with transaction.atomic():
+                instance.actual_quantity = validated_data["actual_quantity"]
+                instance.actual_unit = validated_data["actual_unit"]
+                try:
+                    register_feeding_consume(instance)
+                except ValueError as exc:
+                    raise serializers.ValidationError(
+                        {"detail": str(exc)}
+                    ) from exc
+
+                instance.status = new_status
+                instance.completed_at = timezone.now()
+                if user is not None:
+                    instance.completed_by = user
+                instance.save()
+            return instance
+
+        instance.status = new_status
         instance.completed_at = timezone.now()
         if user is not None:
             instance.completed_by = user

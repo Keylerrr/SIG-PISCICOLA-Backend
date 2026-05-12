@@ -1,6 +1,8 @@
 from django.apps import apps
 from django.utils import timezone
+from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -103,6 +105,35 @@ def _parse_schedule_type_param(params):
     return raw, None
 
 
+def _choices_payload(choices) -> list[dict]:
+    """Lista {value, label} para enums del modelo (TextChoices)."""
+    return [{"value": v, "label": lbl} for v, lbl in choices]
+
+
+class FeedingOptionsView(APIView):
+    """
+    Catálogo de valores permitidos para formularios (cronogramas, eventos).
+
+    GET sin farm_id: solo expone opciones definidas en modelos ``feeding``.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: OpenApiTypes.OBJECT})
+    def get(self, request):
+        return Response(
+            {
+                "feeding_schedule": {
+                    "type": _choices_payload(FeedingSchedule.Stage.choices),
+                    "feed_form": _choices_payload(FeedingSchedule.FeedForm.choices),
+                },
+                "feeding_event": {
+                    "status": _choices_payload(FeedingEvent.Status.choices),
+                },
+            }
+        )
+
+
 class FeedingScheduleListCreateView(APIView):
 
     def get_permissions(self):
@@ -110,6 +141,14 @@ class FeedingScheduleListCreateView(APIView):
             return [AdminOr(IsFarmMember)()]
         return [AdminOr(CanManageCycle)()]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("specie", OpenApiTypes.INT, OpenApiParameter.QUERY),
+            OpenApiParameter("product", OpenApiTypes.INT, OpenApiParameter.QUERY),
+            OpenApiParameter("type", OpenApiTypes.STR, OpenApiParameter.QUERY),
+        ],
+        responses={200: FeedingScheduleSerializer(many=True)},
+    )
     def get(self, request, farm_id):
         farm = _get_farm(farm_id)
         if not farm:
@@ -143,6 +182,10 @@ class FeedingScheduleListCreateView(APIView):
         qs = qs.order_by("-created_at")
         return Response(FeedingScheduleSerializer(qs, many=True).data)
 
+    @extend_schema(
+        request=FeedingScheduleSerializer,
+        responses={201: FeedingScheduleSerializer},
+    )
     def post(self, request, farm_id):
         farm = _get_farm(farm_id)
         if not farm:
@@ -177,6 +220,7 @@ class FeedingScheduleDetailView(APIView):
         except FeedingSchedule.DoesNotExist:
             return None
 
+    @extend_schema(responses={200: FeedingScheduleSerializer})
     def get(self, request, farm_id, schedule_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
@@ -185,6 +229,10 @@ class FeedingScheduleDetailView(APIView):
             return _schedule_not_found_response()
         return Response(FeedingScheduleSerializer(schedule).data)
 
+    @extend_schema(
+        request=FeedingScheduleSerializer,
+        responses={200: FeedingScheduleSerializer},
+    )
     def patch(self, request, farm_id, schedule_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
@@ -200,6 +248,7 @@ class FeedingScheduleDetailView(APIView):
         data["warnings"] = FeedingScheduleSerializer.reference_warnings(instance)
         return Response(data, status=status.HTTP_200_OK)
 
+    @extend_schema(responses={204: None})
     def delete(self, request, farm_id, schedule_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
@@ -231,6 +280,7 @@ class FeedingScheduleVersionsListView(APIView):
     def get_permissions(self):
         return [AdminOr(IsFarmMember)()]
 
+    @extend_schema(responses={200: FeedingScheduleSerializer(many=True)})
     def get(self, request, farm_id, schedule_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
@@ -270,6 +320,12 @@ class FarmFeedingSchedulePlansListView(APIView):
     def get_permissions(self):
         return [AdminOr(IsFarmMember)()]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("cycle", OpenApiTypes.INT, OpenApiParameter.QUERY),
+        ],
+        responses={200: FeedingPlanSerializer(many=True)},
+    )
     def get(self, request, farm_id, schedule_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
@@ -294,6 +350,7 @@ class FeedingPlanOccupiedRangesView(APIView):
     def get_permissions(self):
         return [AdminOr(IsFarmMember)()]
 
+    @extend_schema(responses={200: OpenApiTypes.OBJECT})
     def get(self, request, farm_id, cycle_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
@@ -365,6 +422,7 @@ class FarmFeedingSchedulePlanDetailView(APIView):
     def get_permissions(self):
         return [AdminOr(IsFarmMember)()]
 
+    @extend_schema(responses={200: FeedingPlanSerializer})
     def get(self, request, farm_id, schedule_id, plan_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
@@ -388,6 +446,14 @@ class CycleFeedingPlanListCreateView(APIView):
             return [AdminOr(IsFarmMember)()]
         return [AdminOr(CanManageCycle)()]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "feeding_schedule", OpenApiTypes.INT, OpenApiParameter.QUERY
+            ),
+        ],
+        responses={200: FeedingPlanSerializer(many=True)},
+    )
     def get(self, request, farm_id, cycle_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
@@ -407,6 +473,7 @@ class CycleFeedingPlanListCreateView(APIView):
         qs = qs.order_by("-created_at")
         return Response(FeedingPlanSerializer(qs, many=True).data)
 
+    @extend_schema(request=FeedingPlanSerializer, responses={201: FeedingPlanSerializer})
     def post(self, request, farm_id, cycle_id):
         farm = _get_farm(farm_id)
         if not farm:
@@ -444,6 +511,7 @@ class CycleFeedingPlanDetailView(APIView):
             return [AdminOr(IsFarmMember)()]
         return [AdminOr(CanManageCycle)()]
 
+    @extend_schema(responses={200: FeedingPlanSerializer})
     def get(self, request, farm_id, cycle_id, plan_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
@@ -460,6 +528,10 @@ class CycleFeedingPlanDetailView(APIView):
             return _plan_not_found_response()
         return Response(FeedingPlanSerializer(plan).data)
 
+    @extend_schema(
+        request=FeedingPlanReplaceSerializer,
+        responses={200: FeedingPlanSerializer, 201: FeedingPlanSerializer},
+    )
     def patch(self, request, farm_id, cycle_id, plan_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
@@ -518,6 +590,7 @@ class CycleFeedingPlanDetailView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+    @extend_schema(responses={204: None})
     def delete(self, request, farm_id, cycle_id, plan_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
@@ -548,6 +621,13 @@ class FarmFeedingSchedulePlanEventListView(APIView):
     def get_permissions(self):
         return [AdminOr(IsFarmMember)()]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("cycle", OpenApiTypes.INT, OpenApiParameter.QUERY),
+            OpenApiParameter("pond", OpenApiTypes.INT, OpenApiParameter.QUERY),
+        ],
+        responses={200: FeedingEventSerializer(many=True)},
+    )
     def get(self, request, farm_id, schedule_id, plan_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
@@ -609,6 +689,7 @@ class FarmFeedingSchedulePlanEventDetailView(APIView):
         except FeedingEvent.DoesNotExist:
             return None
 
+    @extend_schema(responses={200: FeedingEventSerializer})
     def get(self, request, farm_id, schedule_id, plan_id, event_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
@@ -636,6 +717,7 @@ class CycleFeedingEventListView(APIView):
     def get_permissions(self):
         return [AdminOr(IsFarmMember)()]
 
+    @extend_schema(responses={200: FeedingEventSerializer(many=True)})
     def get(self, request, farm_id, cycle_id, plan_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
@@ -692,6 +774,7 @@ class CycleFeedingEventDetailView(APIView):
         except FeedingEvent.DoesNotExist:
             return None
 
+    @extend_schema(responses={200: FeedingEventSerializer})
     def get(self, request, farm_id, cycle_id, plan_id, event_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
@@ -707,6 +790,10 @@ class CycleFeedingEventDetailView(APIView):
             return _event_not_found_response()
         return Response(FeedingEventSerializer(event).data)
 
+    @extend_schema(
+        request=FeedingEventUpdateSerializer,
+        responses={200: FeedingEventSerializer},
+    )
     def patch(self, request, farm_id, cycle_id, plan_id, event_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
