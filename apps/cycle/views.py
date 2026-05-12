@@ -64,11 +64,20 @@ class CycleViewSet(viewsets.ModelViewSet):
         active_batches = CyclePondBatch.objects.filter(
             cycle=cycle,
             pond_batch__end_date__isnull=True
-        ).exists()
+        )
         
-        if active_batches:
+        if active_batches.exists():
+            count = active_batches.count()
+            batch_info = []
+            for cpb in active_batches[:3]:  # Mostrar hasta 3 lotes
+                batch_info.append(f"Lote {cpb.pond_batch.batch.code} en {cpb.pond_batch.pond.code}")
+            
+            message = f"No se puede borrar este ciclo. Tiene {count} lote(s) activo(s): {', '.join(batch_info)}"
+            if count > 3:
+                message += f" +{count-3} más"
+            
             return Response(
-                {"detail": "No se puede borrar un ciclo que tiene lotes activos. Finaliza los lotes primero."},
+                {"detail": message},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
