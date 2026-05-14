@@ -151,7 +151,14 @@ class PondDetailView(APIView):
         if not pond:
             return _pond_not_found_response()
 
-        soft_delete_pond(pond)
+        try:
+            soft_delete_pond(pond)
+        except ValueError as e:
+            return Response(
+                {"detail": str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
