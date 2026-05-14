@@ -106,6 +106,13 @@ class PondBatchSerializer(serializers.ModelSerializer):
                 "pond": "El estanque ha sido eliminado y no está disponible."
             })
 
+        # Validar que el estanque esté en estado ACTIVE
+        if pond and pond.status != pond.Status.ACTIVE:
+            raise serializers.ValidationError({
+                "pond": f"Solo se pueden agregar lotes a estanques en estado ACTIVO. "
+                        f"Estado actual: '{pond.get_status_display()}'."
+            })
+
         if batch and batch.status != Batch.Status.ACTIVE:
             raise serializers.ValidationError({
                 "batch": f"El lote no está activo. Estado actual: '{batch.get_status_display()}'."
@@ -124,6 +131,19 @@ class PondBatchSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 "pond": "El estanque debe pertenecer a la misma granja del lote."
             })
+
+        # Validar que no haya lotes de otras especies en el estanque
+        if pond and batch:
+            other_species = PondBatch.objects.filter(
+                pond=pond,
+                end_date__isnull=True
+            ).exclude(batch__specie=batch.specie).exists()
+            
+            if other_species:
+                raise serializers.ValidationError({
+                    "batch": "No se puede combinar lotes de especies distintas en un mismo estanque. "
+                             "Ya hay lotes de otra especie en estado activo."
+                })
 
         if start_date and start_date > date.today():
             raise serializers.ValidationError({
@@ -150,7 +170,15 @@ class PondBatchSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         validated_data["current_quantity"] = validated_data["initial_quantity"]
-        return super().create(validated_data)
+        pond_batch = super().create(validated_data)
+        
+        # Cambiar el estado del estanque a IN_USE
+        pond = pond_batch.pond
+        if pond.status == pond.Status.ACTIVE:
+            pond.status = pond.Status.IN_USE
+            pond.save(update_fields=["status"])
+        
+        return pond_batch
 
 
 class BatchTransferSerializer(serializers.ModelSerializer):

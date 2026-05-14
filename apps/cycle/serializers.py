@@ -249,6 +249,33 @@ class CycleSerializer(serializers.ModelSerializer):
 
         return data
 
+    def update(self, instance, validated_data):
+        from apps.ponds.models import Pond
+        
+        # Verificar si el estado cambió a FINISHED
+        new_state = validated_data.get("state", instance.state)
+        old_state = instance.state
+        
+        # Actualizar la instancia
+        instance = super().update(instance, validated_data)
+        
+        # Si el ciclo cambió a FINISHED, actualizar los estanques asociados a CLEANING
+        if old_state != Cycle.State.FINISHED and new_state == Cycle.State.FINISHED:
+            # Obtener todos los estanques asociados a este ciclo
+            cycle_pond_batches = CyclePondBatch.objects.filter(cycle=instance)
+            ponds_to_update = set()
+            
+            for cpb in cycle_pond_batches:
+                ponds_to_update.add(cpb.pond_batch.pond)
+            
+            # Actualizar el estado de los estanques a CLEANING
+            for pond in ponds_to_update:
+                if pond.status == Pond.Status.IN_USE:
+                    pond.status = Pond.Status.CLEANING
+                    pond.save(update_fields=["status"])
+        
+        return instance
+
 
 class CyclePondBatchSerializer(serializers.ModelSerializer):
     pond_batch_detail = PondBatchDetailSerializer(source="pond_batch", read_only=True)
