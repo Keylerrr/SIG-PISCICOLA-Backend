@@ -3,11 +3,14 @@ from rest_framework.routers import DefaultRouter
 
 from .views import AlertViewSet, AuditLogView, UnitView
 
-router = DefaultRouter()
-router.register(r"unit", UnitView)
-router.register(r"auditlog", AuditLogView)
-router.register(r"alerts", AlertViewSet, basename="alert")
+farm_router = DefaultRouter()
+farm_router.register(r"alerts", AlertViewSet, basename="alert")
+
+global_router = DefaultRouter()
+global_router.register(r"unit", UnitView, basename="unit")
+global_router.register(r"auditlog", AuditLogView, basename="auditlog")
 
 urlpatterns = [
-    path("farms/core/<int:farm_pk>/", include(router.urls)),
+    path("farms/core/<int:farm_pk>/", include(farm_router.urls)),
+    path("", include(global_router.urls)),
 ]
