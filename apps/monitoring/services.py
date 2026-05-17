@@ -106,6 +106,51 @@ class BiomassCalculator:
         total = query.aggregate(total=Sum("quantity"))
         return float(total["total"] or 0)
 
+    @staticmethod
+    def get_active_pond_weights(pond_id: int) -> Dict:
+        """
+        Obtiene los pesos (min, avg, max) de los lotes activos en un estanque.
+        Basado en los PondBatch activos (sin fecha de fin) del estanque.
+
+        Args:
+            pond_id: ID del estanque
+
+        Returns:
+            Dict con:
+            - min_weight_g: Peso mínimo de los lotes activos
+            - avg_weight_g: Peso promedio (promedio de promedios)
+            - max_weight_g: Peso máximo de los lotes activos
+            
+            Si no hay lotes activos, retorna ceros
+        """
+        from apps.batch.models import PondBatch
+
+        # Obtener todos los lotes activos en el estanque
+        active_pond_batches = PondBatch.objects.filter(
+            pond_id=pond_id,
+            end_date__isnull=True
+        ).select_related("batch")
+
+        if not active_pond_batches.exists():
+            return {
+                "min_weight_g": 0.0,
+                "avg_weight_g": 0.0,
+                "max_weight_g": 0.0,
+            }
+
+        # Calcular los pesos agregados
+        weights = active_pond_batches.aggregate(
+            min_weight=Min("batch__min_weight_g"),
+            max_weight=Max("batch__max_weight_g"),
+            avg_weight=Avg("batch__avg_weight_g"),
+        )
+
+        return {
+            "min_weight_g": weights["min_weight"] or 0.0,
+            "avg_weight_g": weights["avg_weight"] or 0.0,
+            "max_weight_g": weights["max_weight"] or 0.0,
+        }
+
 
 class FishEvaluatedCalculator:
     """

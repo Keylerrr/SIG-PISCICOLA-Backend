@@ -21,27 +21,19 @@ class GradingEventSerializer(serializers.ModelSerializer):
             "max_weight_g",
             "date",
         ]
+        read_only_fields = ["min_weight_g", "avg_weight_g", "max_weight_g"]
 
     def validate(self, data):
         cycle = data.get("cycle")
         source = data.get("source_pond_batch")
         destination = data.get("to_pond_batch")
         quantity = data.get("quantity")
-        min_weight = data.get("min_weight_g")
-        avg_weight = data.get("avg_weight_g")
-        max_weight = data.get("max_weight_g")
         event_date = data.get("date")
 
         if quantity is not None and quantity <= 0:
             raise serializers.ValidationError({
                 "quantity": "La cantidad debe ser mayor a 0."
             })
-
-        if min_weight and avg_weight and max_weight:
-            if not (min_weight <= avg_weight <= max_weight):
-                raise serializers.ValidationError({
-                    "weights": "min_weight_g <= avg_weight_g <= max_weight_g debe cumplirse."
-                })
 
         if event_date and event_date > date.today():
             raise serializers.ValidationError({
@@ -129,9 +121,19 @@ class GradingEventSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
+        from apps.monitoring.services import BiomassCalculator
+        
         source = validated_data["source_pond_batch"]
         destination = validated_data["to_pond_batch"]
         quantity = validated_data["quantity"]
+        
+        # Calcular pesos desde el lote origen
+        source_pond = source.pond
+        weights = BiomassCalculator.get_active_pond_weights(source_pond.id)
+        
+        validated_data["min_weight_g"] = weights["min_weight_g"]
+        validated_data["avg_weight_g"] = weights["avg_weight_g"]
+        validated_data["max_weight_g"] = weights["max_weight_g"]
 
         source.current_quantity -= quantity
         source.save(update_fields=["current_quantity"])

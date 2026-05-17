@@ -14,6 +14,7 @@ from apps.purchases.models import InventoryMovement
 class FishEvaluatedSerializer(serializers.ModelSerializer):
     """
     Serializer para evaluaciones de peces con validaciones completas.
+    Los pesos (min, avg, max) se calculan automáticamente desde los lotes activos del estanque.
     """
 
     class Meta:
@@ -32,7 +33,7 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["created_at", "updated_at"]
+        read_only_fields = ["created_at", "updated_at", "min_weight_g", "avg_weight_g", "max_weight_g"]
 
     def validate(self, data):
         cycle = data.get("cycle") or (self.instance.cycle if self.instance else None)
@@ -45,15 +46,6 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
         )
         mortality_quantity = data.get("mortality_quantity") or (
             self.instance.mortality_quantity if self.instance else 0
-        )
-        min_weight_g = data.get("min_weight_g") or (
-            self.instance.min_weight_g if self.instance else None
-        )
-        avg_weight_g = data.get("avg_weight_g") or (
-            self.instance.avg_weight_g if self.instance else None
-        )
-        max_weight_g = data.get("max_weight_g") or (
-            self.instance.max_weight_g if self.instance else None
         )
 
         # Validar que el ciclo existe y está IN_PROGRESS
@@ -97,17 +89,6 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
                 "mortality_quantity": "La mortalidad no puede ser mayor a la cantidad muestreada."
             })
 
-        # Validar pesos
-        if (
-            min_weight_g is not None
-            and avg_weight_g is not None
-            and max_weight_g is not None
-        ):
-            if not (min_weight_g <= avg_weight_g <= max_weight_g):
-                raise serializers.ValidationError({
-                    "min_weight_g": "min_weight_g debe ser <= avg_weight_g <= max_weight_g."
-                })
-
         # Validar que la fecha de evaluación <= hoy
         if evaluation_date and evaluation_date > date.today():
             raise serializers.ValidationError({
@@ -115,6 +96,22 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
             })
 
         return data
+
+    def create(self, validated_data):
+        """
+        Crea una evaluación de peces calculando automáticamente los pesos
+        desde los lotes activos del estanque.
+        """
+        pond = validated_data.get("pond")
+        
+        # Calcular pesos desde los lotes activos del estanque
+        weights = BiomassCalculator.get_active_pond_weights(pond.id)
+        
+        validated_data["min_weight_g"] = weights["min_weight_g"]
+        validated_data["avg_weight_g"] = weights["avg_weight_g"]
+        validated_data["max_weight_g"] = weights["max_weight_g"]
+        
+        return super().create(validated_data)
 
 
 class ProductUsageLogSerializer(serializers.ModelSerializer):
