@@ -195,6 +195,8 @@ class BatchTransferSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, data):
+        from apps.cycle.models import Cycle, CyclePondBatch
+        
         source = data["source_pond_batch"]
         destination = data["to_pond_batch"]
         quantity = data["quantity"]
@@ -213,6 +215,31 @@ class BatchTransferSerializer(serializers.ModelSerializer):
         if source.pond == destination.pond:
             raise serializers.ValidationError({
                 "to_pond_batch": "El estanque origen y destino no pueden ser el mismo."
+            })
+
+        # Validar que AMBOS estanques están INACTIVOS (sin ciclos activos)
+        source_has_active_cycle = CyclePondBatch.objects.filter(
+            pond_batch=source,
+            cycle__state=Cycle.State.IN_PROGRESS
+        ).exists()
+        
+        if source_has_active_cycle:
+            raise serializers.ValidationError({
+                "source_pond_batch": "El estanque origen tiene un ciclo activo. "
+                                    "BatchTransfer solo se permite entre estanques INACTIVOS. "
+                                    "Use GradingEvent para trasladar dentro de un ciclo activo."
+            })
+
+        dest_has_active_cycle = CyclePondBatch.objects.filter(
+            pond_batch=destination,
+            cycle__state=Cycle.State.IN_PROGRESS
+        ).exists()
+        
+        if dest_has_active_cycle:
+            raise serializers.ValidationError({
+                "to_pond_batch": "El estanque destino tiene un ciclo activo. "
+                                "BatchTransfer solo se permite entre estanques INACTIVOS. "
+                                "Use GradingEvent para trasladar dentro de un ciclo activo."
             })
 
         if source.batch.status != Batch.Status.ACTIVE:
