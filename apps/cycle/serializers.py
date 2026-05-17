@@ -183,6 +183,7 @@ class CycleSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         from apps.batch.models import Batch
+        from apps.monitoring.services import CycleStateCalculator
         
         farm = data.get("farm") or (self.instance.farm if self.instance else None)
         specie = data.get("specie") or (self.instance.specie if self.instance else None)
@@ -241,6 +242,13 @@ class CycleSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({
                     "finish_date": "La fecha de fin es obligatoria cuando el ciclo está terminado."
                 })
+            
+            # Validar que el ciclo no se puede cambiar a FINISHED directamente sin cosecha
+            if self.instance and self.instance.state != Cycle.State.FINISHED:
+                raise serializers.ValidationError({
+                    "state": "El ciclo no puede cambiar directamente a estado FINISHED. "
+                            "Debe realizarse una cosecha (Harvest) para terminar el ciclo."
+                })
 
         if finish_date and state not in [Cycle.State.FINISHED, Cycle.State.CANCELLED]:
             raise serializers.ValidationError({
@@ -292,25 +300,17 @@ class CyclePondBatchSerializer(serializers.ModelSerializer):
             "avg_weight_g",
             "max_weight_g",
         ]
+        read_only_fields = ["min_weight_g", "avg_weight_g", "max_weight_g"]
 
     def validate(self, data):
         cycle = data.get("cycle")
         pond_batch = data.get("pond_batch")
         quantity = data.get("quantity")
-        min_weight = data.get("min_weight_g")
-        avg_weight = data.get("avg_weight_g")
-        max_weight = data.get("max_weight_g")
 
         if quantity is not None and quantity <= 0:
             raise serializers.ValidationError({
                 "quantity": "La cantidad debe ser mayor a 0."
             })
-
-        if min_weight and avg_weight and max_weight:
-            if not (min_weight <= avg_weight <= max_weight):
-                raise serializers.ValidationError({
-                    "weights": "min_weight_g <= avg_weight_g <= max_weight_g debe cumplirse."
-                })
 
         if cycle and cycle.state != Cycle.State.IN_PROGRESS:
             raise serializers.ValidationError({
@@ -355,3 +355,22 @@ class CyclePondBatchSerializer(serializers.ModelSerializer):
                     })
 
         return data
+
+    def create(self, validated_data):
+        """
+        Crea una asociación de lote a ciclo calculando automáticamente los pesos
+        desde el pond_batch.
+        """
+        from apps.monitoring.services import BiomassCalculator
+        
+        pond_batch = validated_data.get("pond_batch")
+        
+        # Calcular pesos desde el pond_batch
+        pond = pond_batch.pond
+        weights = BiomassCalculator.get_active_pond_weights(pond.id)
+        
+        validated_data["min_weight_g"] = weights["min_weight_g"]
+        validated_data["avg_weight_g"] = weights["avg_weight_g"]
+        validated_data["max_weight_g"] = weights["max_weight_g"]
+        
+        return super().create(validated_data)
