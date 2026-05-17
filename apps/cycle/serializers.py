@@ -183,6 +183,7 @@ class CycleSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         from apps.batch.models import Batch
+        from apps.monitoring.services import CycleStateCalculator
         
         farm = data.get("farm") or (self.instance.farm if self.instance else None)
         specie = data.get("specie") or (self.instance.specie if self.instance else None)
@@ -240,6 +241,13 @@ class CycleSerializer(serializers.ModelSerializer):
             if not finish_date:
                 raise serializers.ValidationError({
                     "finish_date": "La fecha de fin es obligatoria cuando el ciclo está terminado."
+                })
+            
+            # Validar que el ciclo no se puede cambiar a FINISHED directamente sin cosecha
+            if self.instance and self.instance.state != Cycle.State.FINISHED:
+                raise serializers.ValidationError({
+                    "state": "El ciclo no puede cambiar directamente a estado FINISHED. "
+                            "Debe realizarse una cosecha (Harvest) para terminar el ciclo."
                 })
 
         if finish_date and state not in [Cycle.State.FINISHED, Cycle.State.CANCELLED]:

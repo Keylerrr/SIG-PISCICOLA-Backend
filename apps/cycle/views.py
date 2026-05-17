@@ -81,6 +81,19 @@ class CycleViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        # Verificar si el ciclo tiene datos de monitoring registrados
+        from apps.monitoring.services import CycleStateCalculator
+        
+        if CycleStateCalculator.has_monitoring_data(cycle.id):
+            return Response(
+                {
+                    "detail": "No se puede eliminar este ciclo. Tiene datos de monitoreo registrados "
+                             "(evaluaciones de peces, estadísticas diarias o controles). "
+                             "El ciclo puede ser cosechado o cancelado, pero no eliminado completamente."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         cycle.deleted_at = timezone.now()
         cycle.save(update_fields=["deleted_at"])
         return Response(status=status.HTTP_204_NO_CONTENT)

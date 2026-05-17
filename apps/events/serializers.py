@@ -58,28 +58,34 @@ class GradingEventSerializer(serializers.ModelSerializer):
                 "to_pond_batch": "Los lotes deben tener el mismo estado biológico para clasificar."
             })
 
+        # Validar que el origen está en el ciclo
         if cycle and source:
             if not CyclePondBatch.objects.filter(cycle=cycle, pond_batch=source).exists():
                 raise serializers.ValidationError({
                     "source_pond_batch": "El PondBatch origen no está actualmente en este ciclo."
                 })
 
+        # Validar que el DESTINO NO está en el ciclo (es decir, es un estanque SIN ciclo)
         if cycle and destination:
-            if not CyclePondBatch.objects.filter(cycle=cycle, pond_batch=destination).exists():
+            if CyclePondBatch.objects.filter(cycle=cycle, pond_batch=destination).exists():
                 raise serializers.ValidationError({
-                    "to_pond_batch": "El PondBatch destino no está actualmente en este ciclo."
+                    "to_pond_batch": "El PondBatch destino no debe estar en este ciclo. "
+                                    "GradingEvent debe trasladar a un estanque SIN ciclo activo."
                 })
 
+        # Validar que el estanque destino NO tiene ciclo alguno (está sin ciclo)
         if destination:
             destination_pond = destination.pond
-            active_cycle_in_pond = Cycle.objects.filter(
-                farm_id=destination_pond.farm_id,
-                state=Cycle.State.IN_PROGRESS
-            ).exclude(id=cycle.id if cycle else None).exists()
+            # Verificar que no hay NINGÚN ciclo activo en el estanque destino
+            active_cycle_in_dest_pond = CyclePondBatch.objects.filter(
+                pond_batch__pond=destination_pond,
+                cycle__state=Cycle.State.IN_PROGRESS
+            ).exists()
             
-            if active_cycle_in_pond:
+            if active_cycle_in_dest_pond:
                 raise serializers.ValidationError({
-                    "to_pond_batch": "El estanque destino tiene un ciclo en proceso. Solo se puede transferir a estanques sin ciclo activo."
+                    "to_pond_batch": "El estanque destino no puede tener un ciclo activo. "
+                                    "Solo se puede transferir a estanques sin ciclo."
                 })
 
         if source and destination and source.pond == destination.pond:
