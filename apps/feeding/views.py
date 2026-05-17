@@ -24,6 +24,14 @@ from .utils import (
 )
 
 
+def _confirm_warnings_requested(request) -> bool:
+    return str(request.query_params.get("confirm_warnings", "")).lower() in (
+        "true",
+        "1",
+        "yes",
+    )
+
+
 def _get_farm(farm_id):
     Farm = apps.get_model("farms", "Farm")
     try:
@@ -185,19 +193,34 @@ class FeedingScheduleListCreateView(APIView):
     @extend_schema(
         request=FeedingScheduleSerializer,
         responses={201: FeedingScheduleSerializer},
+        parameters=[
+            OpenApiParameter(
+                name="confirm_warnings",
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description=(
+                    "Si es true, guarda aunque existan advertencias respecto a la "
+                    "referencia técnica. Sin este parámetro, el POST devuelve 400 "
+                    "con las advertencias para que el usuario confirme."
+                ),
+            ),
+        ],
     )
     def post(self, request, farm_id):
         farm = _get_farm(farm_id)
         if not farm:
             return _farm_not_found_response()
         serializer = FeedingScheduleSerializer(
-            data=request.data, context={"farm": farm}
+            data=request.data,
+            context={
+                "farm": farm,
+                "confirm_warnings": _confirm_warnings_requested(request),
+            },
         )
         serializer.is_valid(raise_exception=True)
         instance = serializer.save(farm=farm)
-        data = dict(FeedingScheduleSerializer(instance).data)
-        data["warnings"] = FeedingScheduleSerializer.reference_warnings(instance)
-        return Response(data, status=status.HTTP_201_CREATED)
+        return Response(FeedingScheduleSerializer(instance).data, status=status.HTTP_201_CREATED)
 
 
 class FeedingScheduleDetailView(APIView):
@@ -232,6 +255,18 @@ class FeedingScheduleDetailView(APIView):
     @extend_schema(
         request=FeedingScheduleSerializer,
         responses={200: FeedingScheduleSerializer},
+        parameters=[
+            OpenApiParameter(
+                name="confirm_warnings",
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                required=False,
+                description=(
+                    "Si es true, publica la nueva versión aunque existan advertencias "
+                    "respecto a la referencia técnica."
+                ),
+            ),
+        ],
     )
     def patch(self, request, farm_id, schedule_id):
         if not _get_farm(farm_id):
@@ -240,13 +275,14 @@ class FeedingScheduleDetailView(APIView):
         if not schedule:
             return _schedule_not_found_response()
         serializer = FeedingScheduleSerializer(
-            schedule, data=request.data, partial=True
+            schedule,
+            data=request.data,
+            partial=True,
+            context={"confirm_warnings": _confirm_warnings_requested(request)},
         )
         serializer.is_valid(raise_exception=True)
         instance = serializer.save()
-        data = dict(FeedingScheduleSerializer(instance).data)
-        data["warnings"] = FeedingScheduleSerializer.reference_warnings(instance)
-        return Response(data, status=status.HTTP_200_OK)
+        return Response(FeedingScheduleSerializer(instance).data, status=status.HTTP_200_OK)
 
     @extend_schema(responses={204: None})
     def delete(self, request, farm_id, schedule_id):

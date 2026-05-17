@@ -1,3 +1,6 @@
+from decimal import Decimal
+from types import SimpleNamespace
+
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
@@ -73,6 +76,20 @@ def _validate_feeding_plan_business_rules(
 
 class FeedingScheduleSerializer(serializers.ModelSerializer):
     warnings = serializers.SerializerMethodField(read_only=True)
+    recommendations = serializers.SerializerMethodField(read_only=True)
+
+    # Campos autocompletables desde SpecieFeedingReference al crear (POST), uno a uno.
+    _REFERENCE_DEFAULT_FIELDS = (
+        "pellet_size_mm",
+        "feeding_rate_percentage",
+        "expected_fca",
+        "expected_daily_gain_g",
+    )
+    # Pesos: solo default si faltan los dos; si el usuario manda uno, debe mandar el otro.
+    _REFERENCE_WEIGHT_FIELDS = (
+        "aceptable_min_weight_g",
+        "aceptable_max_weight_g",
+    )
 
     class Meta:
         model = FeedingSchedule
@@ -101,6 +118,7 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
             "updated_at",
             "deleted_at",
             "warnings",
+            "recommendations",
         ]
         read_only_fields = [
             "farm",
@@ -108,7 +126,16 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
             "updated_at",
             "deleted_at",
             "warnings",
+            "recommendations",
         ]
+
+        extra_kwargs = {
+            field: {"required": False, "allow_null": True}
+            for field in (
+                *_REFERENCE_DEFAULT_FIELDS,
+                *_REFERENCE_WEIGHT_FIELDS,
+            )
+        }
 
     _SCHEDULE_PATCH_FORBIDDEN = {
         "name": "El nombre se hereda del cronograma anterior; no se puede enviar al versionar.",
@@ -253,23 +280,6 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
                             ),
                         }
                     )
-        min_w = data.get(
-            "aceptable_min_weight_g",
-            getattr(instance, "aceptable_min_weight_g", None),
-        )
-        max_w = data.get(
-            "aceptable_max_weight_g",
-            getattr(instance, "aceptable_max_weight_g", None),
-        )
-        if min_w is not None and max_w is not None and min_w > max_w:
-            raise serializers.ValidationError(
-                {
-                    "aceptable_min_weight_g": (
-                        "El peso mínimo no puede ser mayor que el máximo."
-                    )
-                }
-            )
-
         times_pd = data.get(
             "times_per_day",
             getattr(instance, "times_per_day", None),
@@ -363,7 +373,162 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
                             }
                         )
 
+        self._validate_acceptable_weight_pair(data)
+
+        if instance is None:
+            self._apply_reference_defaults_on_create(data, specie_pk)
+
+        self._validate_weight_range(data, instance)
+        self._enforce_warnings_confirmation(data, instance, specie_pk)
+
         return data
+
+    @staticmethod
+    def _field_sent(data, field: str) -> bool:
+        return field in data
+
+    def _validate_acceptable_weight_pair(self, data):
+        min_key = "aceptable_min_weight_g"
+        max_key = "aceptable_max_weight_g"
+        min_sent = self._field_sent(data, min_key)
+        max_sent = self._field_sent(data, max_key)
+        if not min_sent and not max_sent:
+            return
+        if min_sent != max_sent:
+            if not min_sent:
+                raise serializers.ValidationError(
+                    {
+                        min_key: (
+                            "Debe indicar el peso mínimo y el máximo aceptables juntos."
+                        )
+                    }
+                )
+            raise serializers.ValidationError(
+                {
+                    max_key: (
+                        "Debe indicar el peso máximo y el mínimo aceptables juntos."
+                    )
+                }
+            )
+
+    def _validate_weight_range(self, data, instance):
+        min_w = data.get(
+            "aceptable_min_weight_g",
+            getattr(instance, "aceptable_min_weight_g", None),
+        )
+        max_w = data.get(
+            "aceptable_max_weight_g",
+            getattr(instance, "aceptable_max_weight_g", None),
+        )
+        if min_w is not None and max_w is not None and min_w > max_w:
+            raise serializers.ValidationError(
+                {
+                    "aceptable_min_weight_g": (
+                        "El peso mínimo no puede ser mayor que el máximo."
+                    )
+                }
+            )
+
+    def _merged_version_value(self, data, instance, field):
+        if instance is None:
+            return data.get(field)
+        if field in data:
+            return data[field]
+        return getattr(instance, field)
+
+    def _schedule_snapshot_for_warnings(self, data, instance, specie_pk):
+        if instance is None:
+            specie_id = specie_pk
+            getter = lambda field: data.get(field)
+        else:
+            specie_id = instance.specie_id
+            getter = lambda field: self._merged_version_value(data, instance, field)
+
+        return SimpleNamespace(
+            specie_id=specie_id,
+            type=getter("type"),
+            feed_form=getter("feed_form"),
+            expected_fca=getter("expected_fca"),
+            expected_daily_gain_g=getter("expected_daily_gain_g"),
+            aceptable_min_weight_g=getter("aceptable_min_weight_g"),
+            aceptable_max_weight_g=getter("aceptable_max_weight_g"),
+        )
+
+    def _enforce_warnings_confirmation(self, data, instance, specie_pk):
+        if self.context.get("confirm_warnings"):
+            return
+        snapshot = self._schedule_snapshot_for_warnings(data, instance, specie_pk)
+        warnings = self.reference_warnings(snapshot)
+        if not warnings:
+            return
+        raise serializers.ValidationError(
+            {
+                "requires_confirmation": True,
+                "message": (
+                    "Hay advertencias respecto a la referencia técnica. "
+                    "Revíselas y reenvíe la solicitud con el parámetro "
+                    "confirm_warnings=true si desea guardar de todos modos."
+                ),
+                "warnings": warnings,
+            }
+        )
+
+    def _apply_recs_to_fields(self, data, recs, fields):
+        for field in fields:
+            if data.get(field) is not None:
+                continue
+            value = recs.get(field)
+            if value is None:
+                continue
+            validator = getattr(self, f"validate_{field}", None)
+            data[field] = validator(value) if validator else value
+
+    @classmethod
+    def _missing_reference_defaults(cls, data) -> list[str]:
+        missing = [
+            field
+            for field in cls._REFERENCE_DEFAULT_FIELDS
+            if data.get(field) is None
+        ]
+        if all(data.get(field) is None for field in cls._REFERENCE_WEIGHT_FIELDS):
+            missing.extend(cls._REFERENCE_WEIGHT_FIELDS)
+        return missing
+
+    def _apply_reference_defaults_on_create(self, data, specie_pk):
+        recs = self.reference_recommendations(
+            specie_pk,
+            data["type"],
+            data["feed_form"],
+        )
+        self._apply_recs_to_fields(data, recs, self._REFERENCE_DEFAULT_FIELDS)
+        if all(data.get(field) is None for field in self._REFERENCE_WEIGHT_FIELDS):
+            self._apply_recs_to_fields(data, recs, self._REFERENCE_WEIGHT_FIELDS)
+
+        missing = self._missing_reference_defaults(data)
+        if not missing:
+            return
+
+        if not recs:
+            raise serializers.ValidationError(
+                {
+                    field: (
+                        "Indique este valor o registre una referencia técnica para "
+                        "esta especie, etapa y forma de alimento."
+                    )
+                    for field in missing
+                }
+            )
+
+        errors = {
+            field: (
+                "La referencia técnica no aporta un valor para este campo; "
+                "indíquelo en la solicitud."
+            )
+            for field in missing
+            if field not in recs
+        }
+        if errors:
+            raise serializers.ValidationError(errors)
 
     def create(self, validated_data):
         validated_data["is_current"] = True
@@ -421,6 +586,73 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
         return new_obj
 
     @staticmethod
+    def _feeding_reference(specie_id, stage, feed_form):
+        if specie_id is None or not stage or not feed_form:
+            return None
+        return (
+            SpecieFeedingReference.objects.filter(
+                specie_id=specie_id,
+                stage=stage,
+                recommended_feed_form=feed_form,
+            )
+            .first()
+        )
+
+    @staticmethod
+    def _reference_midpoint(lo, hi):
+        if lo is None or hi is None:
+            return None
+        return ((lo + hi) / 2).quantize(Decimal("0.01"))
+
+    @classmethod
+    def reference_recommendations(cls, specie_id, stage, feed_form) -> dict:
+        """
+        Valores sugeridos desde SpecieFeedingReference.
+        Las claves con nombre de campo del cronograma se usan como default al crear (POST).
+        recommended_protein_percentage es solo informativo (no existe en FeedingSchedule).
+        """
+        ref = cls._feeding_reference(specie_id, stage, feed_form)
+        if ref is None:
+            return {}
+
+        out: dict = {}
+        if ref.min_weight_g is not None and ref.max_weight_g is not None:
+            out["aceptable_min_weight_g"] = ref.min_weight_g
+            out["aceptable_max_weight_g"] = ref.max_weight_g
+
+        if ref.recommended_protein_percentage is not None:
+            out["recommended_protein_percentage"] = ref.recommended_protein_percentage
+
+        if ref.recommended_pellet_size_mm is not None:
+            out["pellet_size_mm"] = ref.recommended_pellet_size_mm
+
+        if ref.recommended_feeding_rate_percentage is not None:
+            out["feeding_rate_percentage"] = ref.recommended_feeding_rate_percentage
+
+        if ref.reference_fca_min is not None and ref.reference_fca_max is not None:
+            out["expected_fca"] = cls._reference_midpoint(
+                ref.reference_fca_min, ref.reference_fca_max
+            )
+            out["expected_fca_min"] = ref.reference_fca_min
+            out["expected_fca_max"] = ref.reference_fca_max
+        if (
+            ref.reference_daily_gain_g_min is not None
+            and ref.reference_daily_gain_g_max is not None
+        ):
+            out["expected_daily_gain_g"] = cls._reference_midpoint(
+                ref.reference_daily_gain_g_min,
+                ref.reference_daily_gain_g_max,
+            )
+            out["expected_daily_gain_g_min"] = ref.reference_daily_gain_g_min
+            out["expected_daily_gain_g_max"] = ref.reference_daily_gain_g_max
+        return out
+
+    def get_recommendations(self, obj):
+        return self.reference_recommendations(
+            obj.specie_id, obj.type, obj.feed_form
+        )
+
+    @staticmethod
     def reference_warnings(schedule: FeedingSchedule) -> dict[str, str]:
         """
         Compara el schedule con SpecieFeedingReference (misma especie, etapa y forma). Solo se emiten advertencias cuando hay rangos recomendados (min/max) y el dato del schedule queda fuera de esos límites.
@@ -428,21 +660,8 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
         if schedule.specie_id is None or not schedule.type or not schedule.feed_form:
             return {}
 
-        ref = (
-            SpecieFeedingReference.objects.filter(
-                specie_id=schedule.specie_id,
-                stage=schedule.type,
-                recommended_feed_form=schedule.feed_form,
-            )
-            .only(
-                "reference_fca_min",
-                "reference_fca_max",
-                "reference_daily_gain_g_min",
-                "reference_daily_gain_g_max",
-                "min_weight_g",
-                "max_weight_g",
-            )
-            .first()
+        ref = FeedingScheduleSerializer._feeding_reference(
+            schedule.specie_id, schedule.type, schedule.feed_form
         )
 
         if ref is None:
