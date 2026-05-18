@@ -326,10 +326,10 @@ class CyclePondBatchSerializer(serializers.ModelSerializer):
         if pond_batch:
             from apps.ponds.models import Pond
             pond = pond_batch.pond
-            if pond.status not in [Pond.Status.ACTIVE, Pond.Status.IN_USE]:
+            if pond.status in [Pond.Status.INACTIVE, Pond.Status.CLEANING]:
                 raise serializers.ValidationError({
                     "pond_batch": f"El estanque está en estado '{pond.get_status_display()}'. "
-                                 "Solo se pueden agregar lotes a estanques ACTIVOS o EN USO."
+                                 "No se pueden agregar lotes a estanques INACTIVOS o EN LIMPIEZA."
                 })
 
         if cycle and pond_batch:

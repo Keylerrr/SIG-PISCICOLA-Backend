@@ -1,6 +1,7 @@
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.response import Response
+from rest_framework.decorators import action
 
 from apps.accounts.permissions import AdminOr
 from apps.farms.permissions import IsFarmMember, CanManageCycle
@@ -10,6 +11,7 @@ from .serializers import (
     CycleSerializer,
     ProductionPlanSerializer,
 )
+from apps.monitoring.services import CycleStateCalculator
 
 
 class ProductionPlanViewSet(viewsets.ModelViewSet):
@@ -97,6 +99,32 @@ class CycleViewSet(viewsets.ModelViewSet):
         cycle.deleted_at = timezone.now()
         cycle.save(update_fields=["deleted_at"])
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=True, methods=["get"])
+    def current_state(self, request, farm_pk=None, pk=None):
+        """
+        Retorna el estado actual dinámico del ciclo basado en datos de monitoring.
+        
+        GET /farms/{farm_pk}/cycles/{cycle_pk}/current_state/
+        
+        Respuesta:
+        {
+            "fish_quantity": 4850,
+            "total_mortality": 150,
+            "avg_weight_g": 45.5,
+            "min_weight_g": 40.0,
+            "max_weight_g": 52.0,
+            "mortality_percentage": 3.0,
+            "biomass_kg": 220.8,
+            "fca": 1.2,
+            "days_elapsed": 30,
+            "last_evaluation_date": "2026-05-17",
+            "has_monitoring_data": true
+        }
+        """
+        cycle = self.get_object()
+        state = CycleStateCalculator.get_cycle_current_state(cycle.id)
+        return Response(state, status=status.HTTP_200_OK)
 
 
 class CyclePondBatchViewSet(viewsets.ModelViewSet):
