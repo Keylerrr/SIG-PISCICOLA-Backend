@@ -50,23 +50,23 @@ urlpatterns = [
         FeedingScheduleDetailView.as_view(),
     ),
     path(
-        "farms/<int:farm_id>/cycles/<int:cycle_id>/feeding-plans/occupied-ranges/",
+        "farms/<int:farm_id>/ponds/<int:pond_id>/cycles/<int:cycle_id>/feeding-plans/occupied-ranges/",
         FeedingPlanOccupiedRangesView.as_view(),
     ),
     path(
-        "farms/<int:farm_id>/cycles/<int:cycle_id>/feeding-plans/",
+        "farms/<int:farm_id>/ponds/<int:pond_id>/cycles/<int:cycle_id>/feeding-plans/",
         CycleFeedingPlanListCreateView.as_view(),
     ),
     path(
-        "farms/<int:farm_id>/cycles/<int:cycle_id>/feeding-plans/<int:plan_id>/",
+        "farms/<int:farm_id>/ponds/<int:pond_id>/cycles/<int:cycle_id>/feeding-plans/<int:plan_id>/",
         CycleFeedingPlanDetailView.as_view(),
     ),
     path(
-        "farms/<int:farm_id>/cycles/<int:cycle_id>/feeding-plans/<int:plan_id>/feeding-events/",
+        "farms/<int:farm_id>/ponds/<int:pond_id>/cycles/<int:cycle_id>/feeding-plans/<int:plan_id>/feeding-events/",
         CycleFeedingEventListView.as_view(),
     ),
     path(
-        "farms/<int:farm_id>/cycles/<int:cycle_id>/feeding-plans/<int:plan_id>/feeding-events/<int:event_id>/",
+        "farms/<int:farm_id>/ponds/<int:pond_id>/cycles/<int:cycle_id>/feeding-plans/<int:plan_id>/feeding-events/<int:event_id>/",
         CycleFeedingEventDetailView.as_view(),
     ),
 ]
