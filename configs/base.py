@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "apps.feeding",
     "apps.monitoring",
     "apps.health",
+    "apps.harvest",
 ]
 
 MIDDLEWARE = [
