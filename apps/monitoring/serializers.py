@@ -101,12 +101,8 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
         """
         Crea una evaluación de peces calculando automáticamente los pesos
         desde los lotes activos del estanque.
-        
-        Si la mortalidad es del 100%, cambia automáticamente el estado
-        de todos los batches activos en el estanque a DEAD.
         """
         pond = validated_data.get("pond")
-        cycle = validated_data.get("cycle")
         
         # Calcular pesos desde los lotes activos del estanque
         weights = BiomassCalculator.get_active_pond_weights(pond.id)
@@ -115,60 +111,7 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
         validated_data["avg_weight_g"] = weights["avg_weight_g"]
         validated_data["max_weight_g"] = weights["max_weight_g"]
         
-        # Crear la evaluación
-        fish_evaluated = super().create(validated_data)
-        
-        # Verificar si la mortalidad es del 100%
-        sampled = fish_evaluated.sampled_quantity
-        mortality = fish_evaluated.mortality_quantity
-        
-        if sampled > 0 and mortality == sampled:
-            # Cambiar automáticamente todos los batches activos del estanque a DEAD
-            from apps.batch.models import PondBatch, Batch
-            
-            active_pond_batches = PondBatch.objects.filter(
-                pond=pond,
-                end_date__isnull=True
-            ).select_related("batch")
-            
-            for pond_batch in active_pond_batches:
-                if pond_batch.batch.status != Batch.Status.DEAD:
-                    pond_batch.batch.status = Batch.Status.DEAD
-                    pond_batch.batch.save(update_fields=["status"])
-        
-        return fish_evaluated
-
-    def update(self, instance, validated_data):
-        """
-        Actualiza una evaluación de peces.
-        
-        Si la mortalidad actualizada es del 100%, cambia automáticamente 
-        el estado de todos los batches activos en el estanque a DEAD.
-        """
-        pond = validated_data.get("pond", instance.pond)
-        
-        # Actualizar la instancia
-        fish_evaluated = super().update(instance, validated_data)
-        
-        # Verificar si la mortalidad es del 100%
-        sampled = fish_evaluated.sampled_quantity
-        mortality = fish_evaluated.mortality_quantity
-        
-        if sampled > 0 and mortality == sampled:
-            # Cambiar automáticamente todos los batches activos del estanque a DEAD
-            from apps.batch.models import PondBatch, Batch
-            
-            active_pond_batches = PondBatch.objects.filter(
-                pond=pond,
-                end_date__isnull=True
-            ).select_related("batch")
-            
-            for pond_batch in active_pond_batches:
-                if pond_batch.batch.status != Batch.Status.DEAD:
-                    pond_batch.batch.status = Batch.Status.DEAD
-                    pond_batch.batch.save(update_fields=["status"])
-        
-        return fish_evaluated
+        return super().create(validated_data)
 
 
 class ProductUsageLogSerializer(serializers.ModelSerializer):
