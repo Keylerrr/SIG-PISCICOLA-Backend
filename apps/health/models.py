@@ -60,11 +60,9 @@ class TreatmentPlan(models.Model):
         CANCELLED = "cancelled", "Cancelled"
 
     class ApplicationMethod(models.TextChoices):
-        ORAL = "oral", "Oral / en alimento"
-        BATH = "bath", "Baño"
-        INJECTION = "injection", "Inyección"
-        WATER_ADDITION = "water_addition", "Adición al agua"
-        TOPICAL = "topical", "Tópico"
+        ORAL = "oral", "Oral (alimento medicado)"
+        WATER_ADDITION = "water_addition", "Adición al agua del estanque"
+        BATH = "bath", "Baño / inmersión corta"
 
     farm = models.ForeignKey(
         "farms.Farm",
