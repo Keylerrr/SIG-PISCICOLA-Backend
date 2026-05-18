@@ -84,6 +84,17 @@ def _get_cycle_in_farm(farm_id: int, cycle_id: int):
         return None
 
 
+def _get_cycle_in_pond(farm_id: int, pond_id: int, cycle_id: int):
+    """Valida que el ciclo exista en la granja Y pertenezca al estanque."""
+    Cycle = apps.get_model("cycle", "Cycle")
+    try:
+        return Cycle.objects.get(
+            pk=cycle_id, farm_id=farm_id, pond_id=pond_id, deleted_at__isnull=True
+        )
+    except Cycle.DoesNotExist:
+        return None
+
+
 def _bad_request(detail: str):
     return Response({"detail": detail}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -490,14 +501,14 @@ class CycleFeedingPlanListCreateView(APIView):
         ],
         responses={200: FeedingPlanSerializer(many=True)},
     )
-    def get(self, request, farm_id, cycle_id):
+    def get(self, request, farm_id, pond_id, cycle_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
+        if not _get_cycle_in_pond(farm_id, pond_id, cycle_id):
             return _cycle_not_found_response()
 
         qs = FeedingPlan.objects.filter(
-            farm_id=farm_id, cycle_id=cycle_id
+            farm_id=farm_id, cycle_id=cycle_id, cycle__pond_id=pond_id
         ).select_related("cycle", "feeding_schedule", "farm")
         if not AdminOr(CanManageCycle)().has_permission(request, self):
             qs = qs.filter(deleted_at__isnull=True)
@@ -510,11 +521,11 @@ class CycleFeedingPlanListCreateView(APIView):
         return Response(FeedingPlanSerializer(qs, many=True).data)
 
     @extend_schema(request=FeedingPlanSerializer, responses={201: FeedingPlanSerializer})
-    def post(self, request, farm_id, cycle_id):
+    def post(self, request, farm_id, pond_id, cycle_id):
         farm = _get_farm(farm_id)
         if not farm:
             return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
+        if not _get_cycle_in_pond(farm_id, pond_id, cycle_id):
             return _cycle_not_found_response()
 
         body = request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
@@ -548,10 +559,10 @@ class CycleFeedingPlanDetailView(APIView):
         return [AdminOr(CanManageCycle)()]
 
     @extend_schema(responses={200: FeedingPlanSerializer})
-    def get(self, request, farm_id, cycle_id, plan_id):
+    def get(self, request, farm_id, pond_id, cycle_id, plan_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
+        if not _get_cycle_in_pond(farm_id, pond_id, cycle_id):
             return _cycle_not_found_response()
         plan = _get_feeding_plan_for_farm(
             farm_id, plan_id, current_only=False, cycle_id=cycle_id
@@ -568,10 +579,10 @@ class CycleFeedingPlanDetailView(APIView):
         request=FeedingPlanReplaceSerializer,
         responses={200: FeedingPlanSerializer, 201: FeedingPlanSerializer},
     )
-    def patch(self, request, farm_id, cycle_id, plan_id):
+    def patch(self, request, farm_id, pond_id, cycle_id, plan_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
+        if not _get_cycle_in_pond(farm_id, pond_id, cycle_id):
             return _cycle_not_found_response()
         plan = _get_feeding_plan_for_farm(
             farm_id, plan_id, current_only=True, cycle_id=cycle_id
@@ -627,10 +638,10 @@ class CycleFeedingPlanDetailView(APIView):
             )
 
     @extend_schema(responses={204: None})
-    def delete(self, request, farm_id, cycle_id, plan_id):
+    def delete(self, request, farm_id, pond_id, cycle_id, plan_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
+        if not _get_cycle_in_pond(farm_id, pond_id, cycle_id):
             return _cycle_not_found_response()
         plan = _get_feeding_plan_for_farm(
             farm_id, plan_id, current_only=True, cycle_id=cycle_id
@@ -754,10 +765,10 @@ class CycleFeedingEventListView(APIView):
         return [AdminOr(IsFarmMember)()]
 
     @extend_schema(responses={200: FeedingEventSerializer(many=True)})
-    def get(self, request, farm_id, cycle_id, plan_id):
+    def get(self, request, farm_id, pond_id, cycle_id, plan_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
+        if not _get_cycle_in_pond(farm_id, pond_id, cycle_id):
             return _cycle_not_found_response()
         plan = _get_feeding_plan_for_farm(
             farm_id, plan_id, current_only=False, cycle_id=cycle_id
@@ -792,7 +803,7 @@ class CycleFeedingEventDetailView(APIView):
             return [AdminOr(IsFarmMember)()]
         return [AdminOr(CanManageCycle)()]
 
-    def _get_event(self, farm_id, cycle_id, plan_id, event_id):
+    def _get_event(self, farm_id, pond_id, cycle_id, plan_id, event_id):
         try:
             return FeedingEvent.objects.select_related(
                 "cycle",
@@ -806,17 +817,18 @@ class CycleFeedingEventDetailView(APIView):
                 farm_id=farm_id,
                 cycle_id=cycle_id,
                 feeding_plan_id=plan_id,
+                cycle__pond_id=pond_id,
             )
         except FeedingEvent.DoesNotExist:
             return None
 
     @extend_schema(responses={200: FeedingEventSerializer})
-    def get(self, request, farm_id, cycle_id, plan_id, event_id):
+    def get(self, request, farm_id, pond_id, cycle_id, plan_id, event_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
+        if not _get_cycle_in_pond(farm_id, pond_id, cycle_id):
             return _cycle_not_found_response()
-        event = self._get_event(farm_id, cycle_id, plan_id, event_id)
+        event = self._get_event(farm_id, pond_id, cycle_id, plan_id, event_id)
         if not event:
             return _event_not_found_response()
         if (
@@ -830,12 +842,12 @@ class CycleFeedingEventDetailView(APIView):
         request=FeedingEventUpdateSerializer,
         responses={200: FeedingEventSerializer},
     )
-    def patch(self, request, farm_id, cycle_id, plan_id, event_id):
+    def patch(self, request, farm_id, pond_id, cycle_id, plan_id, event_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
+        if not _get_cycle_in_pond(farm_id, pond_id, cycle_id):
             return _cycle_not_found_response()
-        event = self._get_event(farm_id, cycle_id, plan_id, event_id)
+        event = self._get_event(farm_id, pond_id, cycle_id, plan_id, event_id)
         if not event:
             return _event_not_found_response()
         if (
