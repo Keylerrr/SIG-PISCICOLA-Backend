@@ -50,10 +50,17 @@ class CycleViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")
-        return Cycle.objects.filter(
+        queryset = Cycle.objects.filter(
             farm_id=farm_id,
             deleted_at__isnull=True,
         ).select_related("production_plan").order_by("-start_date")
+        
+        # Filtrar por especie si se proporciona
+        specie_id = self.request.query_params.get("specie_id")
+        if specie_id:
+            queryset = queryset.filter(specie_id=specie_id)
+        
+        return queryset
 
     def perform_create(self, serializer):
         farm_id = self.kwargs.get("farm_pk")
