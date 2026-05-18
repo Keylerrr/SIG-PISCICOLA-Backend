@@ -53,12 +53,19 @@ class CycleViewSet(viewsets.ModelViewSet):
         queryset = Cycle.objects.filter(
             farm_id=farm_id,
             deleted_at__isnull=True,
-        ).select_related("production_plan").order_by("-start_date")
+        ).select_related("production_plan")
         
         # Filtrar por especie si se proporciona
         specie_id = self.request.query_params.get("specie_id")
         if specie_id:
             queryset = queryset.filter(specie_id=specie_id)
+        
+        # Ordenar por fecha (descendente por defecto, ascendente si se pasa ordering=asc)
+        ordering = self.request.query_params.get("ordering", "desc")
+        if ordering == "asc":
+            queryset = queryset.order_by("start_date")
+        else:
+            queryset = queryset.order_by("-start_date")
         
         return queryset
 
