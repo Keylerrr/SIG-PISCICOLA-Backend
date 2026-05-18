@@ -7,6 +7,7 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.cycle.models import Cycle, CyclePondBatch
+from apps.farms.models import Farm
 from apps.purchases.models import InventoryMovement
 from apps.purchases.utils import create_out_movement
 from apps.monitoring.services import BiomassCalculator
@@ -95,6 +96,59 @@ def feeding_plan_lifecycle_state(plan: FeedingPlan, today=None):
     if plan.start_date <= today <= plan.end_date:
         return "in_progress"
     return "scheduled"
+
+
+def collect_feeding_plan_business_errors(
+    *,
+    farm_id: int,
+    cycle: Cycle,
+    schedule: FeedingSchedule,
+    start_date,
+    end_date,
+) -> dict:
+    errors = {}
+    try:
+        Farm.objects.get(pk=farm_id, deleted_at__isnull=True)
+    except Farm.DoesNotExist:
+        errors["farm"] = "La granja no existe o no está disponible."
+
+    if cycle.deleted_at:
+        errors["cycle"] = "El ciclo no está disponible."
+    if getattr(cycle, "farm", None) and cycle.farm.deleted_at:
+        errors["cycle"] = "La granja asociada al ciclo no está disponible."
+    if schedule.deleted_at is not None:
+        errors["feeding_schedule"] = "El cronograma no está disponible."
+    if getattr(schedule, "farm", None) and schedule.farm.deleted_at:
+        errors["feeding_schedule"] = (
+            "La granja asociada al cronograma no está disponible."
+        )
+    if cycle.farm_id != farm_id:
+        errors["cycle"] = "El ciclo debe pertenecer a la misma granja."
+    if schedule.farm_id != farm_id:
+        errors["feeding_schedule"] = "El cronograma debe pertenecer a la misma granja."
+    if cycle.specie_id != schedule.specie_id:
+        errors["feeding_schedule"] = (
+            "La especie del cronograma debe coincidir con la del ciclo."
+        )
+    if cycle.state in (Cycle.State.FINISHED, Cycle.State.CANCELLED):
+        errors["cycle"] = (
+            "No se puede asociar un plan a un ciclo finalizado o cancelado."
+        )
+    if start_date > end_date:
+        errors["end_date"] = "La fecha de fin debe ser mayor o igual al inicio."
+    if start_date < cycle.start_date:
+        errors["start_date"] = (
+            "El inicio del plan no puede ser anterior al inicio del ciclo."
+        )
+    if end_date > cycle.estimated_finish_date:
+        errors["end_date"] = (
+            "La fecha de fin no puede superar la fecha estimada de fin del ciclo."
+        )
+    if cycle.finish_date and end_date > cycle.finish_date:
+        errors["end_date"] = (
+            "La fecha de fin no puede superar la fecha de cierre del ciclo."
+        )
+    return errors
 
 
 def register_feeding_consume(feeding_event: FeedingEvent):

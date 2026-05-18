@@ -6,90 +6,34 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from apps.cycle.models import Cycle
-from apps.farms.models import Farm
 from apps.products.models import Product
 from apps.species.models import Specie, SpecieFeedingReference
 
-from .constants import FEED_SCHEDULE_PRODUCT_TYPE_NAMES, MINUTES_PER_DAY
+from .constants import (
+    FEEDING_PLAN_DATE_OVERLAP_MESSAGE,
+    FEEDING_SCHEDULE_CREATE_PARENT_MESSAGE,
+    FEEDING_SCHEDULE_PATCH_FORBIDDEN_MESSAGES,
+    FEEDING_SCHEDULE_REFERENCE_DEFAULT_FIELDS,
+    FEEDING_SCHEDULE_REFERENCE_WEIGHT_FIELDS,
+    FEEDING_SCHEDULE_SYSTEM_ASSIGNED_FIELDS,
+    FEEDING_SCHEDULE_SYSTEM_ASSIGNED_MESSAGE,
+    FEEDING_SCHEDULE_VERSION_MERGE_FIELDS,
+    FEED_SCHEDULE_PRODUCT_TYPE_NAMES,
+    MINUTES_PER_DAY,
+)
 from .models import FeedingEvent, FeedingPlan, FeedingSchedule
 from .utils import (
     active_plan_date_overlap,
     create_feeding_events_for_plan,
     feeding_plan_lifecycle_state,
     register_feeding_consume,
+    collect_feeding_plan_business_errors,
 )
-
-
-def _validate_feeding_plan_business_rules(
-    *,
-    farm_id: int,
-    cycle: Cycle,
-    schedule: FeedingSchedule,
-    start_date,
-    end_date,
-):
-    errors = {}
-    try:
-        Farm.objects.get(pk=farm_id, deleted_at__isnull=True)
-    except Farm.DoesNotExist:
-        errors["farm"] = "La granja no existe o no está disponible."
-
-    if cycle.deleted_at:
-        errors["cycle"] = "El ciclo no está disponible."
-    if getattr(cycle, "farm", None) and cycle.farm.deleted_at:
-        errors["cycle"] = "La granja asociada al ciclo no está disponible."
-    if schedule.deleted_at is not None:
-        errors["feeding_schedule"] = "El cronograma no está disponible."
-    if getattr(schedule, "farm", None) and schedule.farm.deleted_at:
-        errors["feeding_schedule"] = (
-            "La granja asociada al cronograma no está disponible."
-        )
-    if cycle.farm_id != farm_id:
-        errors["cycle"] = "El ciclo debe pertenecer a la misma granja."
-    if schedule.farm_id != farm_id:
-        errors["feeding_schedule"] = "El cronograma debe pertenecer a la misma granja."
-    if cycle.specie_id != schedule.specie_id:
-        errors["feeding_schedule"] = (
-            "La especie del cronograma debe coincidir con la del ciclo."
-        )
-    if cycle.state in (Cycle.State.FINISHED, Cycle.State.CANCELLED):
-        errors["cycle"] = (
-            "No se puede asociar un plan a un ciclo finalizado o cancelado."
-        )
-    if start_date > end_date:
-        errors["end_date"] = "La fecha de fin debe ser mayor o igual al inicio."
-    if start_date < cycle.start_date:
-        errors["start_date"] = (
-            "El inicio del plan no puede ser anterior al inicio del ciclo."
-        )
-    if end_date > cycle.estimated_finish_date:
-        errors["end_date"] = (
-            "La fecha de fin no puede superar la fecha estimada de fin del ciclo."
-        )
-    if cycle.finish_date and end_date > cycle.finish_date:
-        errors["end_date"] = (
-            "La fecha de fin no puede superar la fecha de cierre del ciclo."
-        )
-    if errors:
-        raise serializers.ValidationError(errors)
 
 
 class FeedingScheduleSerializer(serializers.ModelSerializer):
     warnings = serializers.SerializerMethodField(read_only=True)
     recommendations = serializers.SerializerMethodField(read_only=True)
-
-    # Campos autocompletables desde SpecieFeedingReference al crear (POST), uno a uno.
-    _REFERENCE_DEFAULT_FIELDS = (
-        "pellet_size_mm",
-        "feeding_rate_percentage",
-        "expected_fca",
-        "expected_daily_gain_g",
-    )
-    # Pesos: solo default si faltan los dos; si el usuario manda uno, debe mandar el otro.
-    _REFERENCE_WEIGHT_FIELDS = (
-        "aceptable_min_weight_g",
-        "aceptable_max_weight_g",
-    )
 
     class Meta:
         model = FeedingSchedule
@@ -132,45 +76,10 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             field: {"required": False, "allow_null": True}
             for field in (
-                *_REFERENCE_DEFAULT_FIELDS,
-                *_REFERENCE_WEIGHT_FIELDS,
+                *FEEDING_SCHEDULE_REFERENCE_DEFAULT_FIELDS,
+                *FEEDING_SCHEDULE_REFERENCE_WEIGHT_FIELDS,
             )
         }
-
-    _SCHEDULE_PATCH_FORBIDDEN = {
-        "name": "El nombre se hereda del cronograma anterior; no se puede enviar al versionar.",
-        "product": (
-            "El producto se hereda del cronograma anterior; para otro alimento cree un "
-            "cronograma nuevo (POST)."
-        ),
-        "specie": (
-            "La especie se hereda del cronograma anterior; para otra especie cree un "
-            "cronograma nuevo (POST)."
-        ),
-        "parent": (
-            "No envíe parent: la nueva versión queda automáticamente ligada al "
-            "cronograma que está actualizando."
-        ),
-        "version": "La versión la asigna el servidor al crear la nueva fila.",
-        "is_current": (
-            "La marca de versión vigente la define el sistema al crear la nueva versión."
-        ),
-    }
-
-    _SCHEDULE_VERSION_MERGE_FIELDS = (
-        "comments",
-        "type",
-        "aceptable_min_weight_g",
-        "aceptable_max_weight_g",
-        "feed_form",
-        "pellet_size_mm",
-        "feeding_rate_percentage",
-        "times_per_day",
-        "gap_between_times_per_day",
-        "gap_between_completed_day",
-        "expected_fca",
-        "expected_daily_gain_g",
-    )
 
     def validate_name(self, value):
         text = (value or "").strip()
@@ -257,28 +166,18 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
                     }
                 )
         if instance is not None:
-            for field, message in self._SCHEDULE_PATCH_FORBIDDEN.items():
+            for field, message in FEEDING_SCHEDULE_PATCH_FORBIDDEN_MESSAGES.items():
                 if field in data:
                     raise serializers.ValidationError({field: message})
         if instance is None and data.get("parent") is not None:
             raise serializers.ValidationError(
-                {
-                    "parent": (
-                        "Al crear un cronograma nuevo no debe enviar parent. "
-                        "Para publicar una nueva versión, use el flujo de actualización "
-                        "del cronograma vigente que desea sustituir."
-                    ),
-                }
+                {"parent": FEEDING_SCHEDULE_CREATE_PARENT_MESSAGE}
             )
         if instance is None:
-            for field in ("version", "is_current"):
+            for field in FEEDING_SCHEDULE_SYSTEM_ASSIGNED_FIELDS:
                 if field in data:
                     raise serializers.ValidationError(
-                        {
-                            field: (
-                                "Este campo lo asigna el sistema al crear el cronograma."
-                            ),
-                        }
+                        {field: FEEDING_SCHEDULE_SYSTEM_ASSIGNED_MESSAGE}
                     )
         times_pd = data.get(
             "times_per_day",
@@ -487,11 +386,14 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
     def _missing_reference_defaults(cls, data) -> list[str]:
         missing = [
             field
-            for field in cls._REFERENCE_DEFAULT_FIELDS
+            for field in FEEDING_SCHEDULE_REFERENCE_DEFAULT_FIELDS
             if data.get(field) is None
         ]
-        if all(data.get(field) is None for field in cls._REFERENCE_WEIGHT_FIELDS):
-            missing.extend(cls._REFERENCE_WEIGHT_FIELDS)
+        if all(
+            data.get(field) is None
+            for field in FEEDING_SCHEDULE_REFERENCE_WEIGHT_FIELDS
+        ):
+            missing.extend(FEEDING_SCHEDULE_REFERENCE_WEIGHT_FIELDS)
         return missing
 
     def _apply_reference_defaults_on_create(self, data, specie_pk):
@@ -500,9 +402,16 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
             data["type"],
             data["feed_form"],
         )
-        self._apply_recs_to_fields(data, recs, self._REFERENCE_DEFAULT_FIELDS)
-        if all(data.get(field) is None for field in self._REFERENCE_WEIGHT_FIELDS):
-            self._apply_recs_to_fields(data, recs, self._REFERENCE_WEIGHT_FIELDS)
+        self._apply_recs_to_fields(
+            data, recs, FEEDING_SCHEDULE_REFERENCE_DEFAULT_FIELDS
+        )
+        if all(
+            data.get(field) is None
+            for field in FEEDING_SCHEDULE_REFERENCE_WEIGHT_FIELDS
+        ):
+            self._apply_recs_to_fields(
+                data, recs, FEEDING_SCHEDULE_REFERENCE_WEIGHT_FIELDS
+            )
 
         missing = self._missing_reference_defaults(data)
         if not missing:
@@ -575,7 +484,7 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
                 "product_id": old.product_id,
                 "specie_id": old.specie_id,
             }
-            for f in self._SCHEDULE_VERSION_MERGE_FIELDS:
+            for f in FEEDING_SCHEDULE_VERSION_MERGE_FIELDS:
                 create_kwargs[f] = (
                     validated_data[f] if f in validated_data else getattr(old, f)
                 )
@@ -785,13 +694,15 @@ class FeedingPlanSerializer(serializers.ModelSerializer):
 
         start = data["start_date"]
         end = data["end_date"]
-        _validate_feeding_plan_business_rules(
+        plan_errors = collect_feeding_plan_business_errors(
             farm_id=farm_id,
             cycle=cycle,
             schedule=schedule,
             start_date=start,
             end_date=end,
         )
+        if plan_errors:
+            raise serializers.ValidationError(plan_errors)
 
         if active_plan_date_overlap(
             cycle_id=cycle.pk,
@@ -800,12 +711,8 @@ class FeedingPlanSerializer(serializers.ModelSerializer):
         ):
             raise serializers.ValidationError(
                 {
-                    "start_date": (
-                        "Las fechas se solapan con otro plan vigente del mismo ciclo."
-                    ),
-                    "end_date": (
-                        "Las fechas se solapan con otro plan vigente del mismo ciclo."
-                    ),
+                    "start_date": FEEDING_PLAN_DATE_OVERLAP_MESSAGE,
+                    "end_date": FEEDING_PLAN_DATE_OVERLAP_MESSAGE,
                 }
             )
 
@@ -823,12 +730,8 @@ class FeedingPlanSerializer(serializers.ModelSerializer):
             ):
                 raise serializers.ValidationError(
                     {
-                        "start_date": (
-                            "Las fechas se solapan con otro plan vigente del mismo ciclo."
-                        ),
-                        "end_date": (
-                            "Las fechas se solapan con otro plan vigente del mismo ciclo."
-                        ),
+                        "start_date": FEEDING_PLAN_DATE_OVERLAP_MESSAGE,
+                        "end_date": FEEDING_PLAN_DATE_OVERLAP_MESSAGE,
                     }
                 )
             plan = super().create(validated_data)
@@ -872,13 +775,15 @@ class FeedingPlanReplaceSerializer(serializers.Serializer):
         start = data["start_date"]
         end = data["end_date"]
 
-        _validate_feeding_plan_business_rules(
+        plan_errors = collect_feeding_plan_business_errors(
             farm_id=farm_id,
             cycle=cycle_obj,
             schedule=schedule_obj,
             start_date=start,
             end_date=end,
         )
+        if plan_errors:
+            raise serializers.ValidationError(plan_errors)
 
         state = feeding_plan_lifecycle_state(old)
         if state == "in_progress":
@@ -922,12 +827,8 @@ class FeedingPlanReplaceSerializer(serializers.Serializer):
         ):
             raise serializers.ValidationError(
                 {
-                    "start_date": (
-                        "Las fechas se solapan con otro plan vigente del mismo ciclo."
-                    ),
-                    "end_date": (
-                        "Las fechas se solapan con otro plan vigente del mismo ciclo."
-                    ),
+                    "start_date": FEEDING_PLAN_DATE_OVERLAP_MESSAGE,
+                    "end_date": FEEDING_PLAN_DATE_OVERLAP_MESSAGE,
                 }
             )
 
