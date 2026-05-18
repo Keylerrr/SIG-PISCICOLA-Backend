@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from datetime import date
+from django.db.models import Sum
 
 from .models import FishEvaluated, DailyStat, ProductUsageLog, ControlStat
 from .services import BiomassCalculator, FishEvaluatedCalculator
@@ -15,7 +16,11 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
     """
     Serializer para evaluaciones de peces con validaciones completas.
     Los pesos (min, avg, max) se calculan automáticamente desde los lotes activos del estanque.
+    
+    - SIN batch_id: Mortalidad general, se descuenta proporcionalmente de todos los batches
+    - CON batch_id: Mortalidad específica de un batch. Si es 100%, obligatoriamente cambia a DEAD
     """
+    batch_id = serializers.IntegerField(write_only=True, required=False)
 
     class Meta:
         model = FishEvaluated
@@ -30,6 +35,7 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
             "max_weight_g",
             "mortality_quantity",
             "observations",
+            "batch_id",
             "created_at",
             "updated_at",
         ]
@@ -47,6 +53,7 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
         mortality_quantity = data.get("mortality_quantity") or (
             self.instance.mortality_quantity if self.instance else 0
         )
+        batch_id = data.get("batch_id")
 
         # Validar que el ciclo existe y está IN_PROGRESS
         if cycle:
@@ -95,14 +102,30 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
                 "evaluation_date": "La fecha de evaluación no puede ser futura."
             })
 
+        # Si se especifica batch_id y mortalidad es 100%, es válido (cambiar a DEAD)
+        # Si se especifica batch_id pero mortalidad < 100%, se descuenta solo de ese batch
+        # Si NO se especifica batch_id, se descuenta proporcionalmente de todos
+        if batch_id:
+            if not Batch.objects.filter(id=batch_id).exists():
+                raise serializers.ValidationError({
+                    "batch_id": "El batch especificado no existe."
+                })
+
         return data
 
     def create(self, validated_data):
         """
         Crea una evaluación de peces calculando automáticamente los pesos
         desde los lotes activos del estanque.
+        
+        - SIN batch_id: Descuenta mortalidad proporcionalmente de TODOS los batches del ciclo
+        - CON batch_id: Descuenta mortalidad SOLO de ese batch. Si es 100%, cambia a DEAD
         """
+        batch_id = validated_data.pop("batch_id", None)
         pond = validated_data.get("pond")
+        cycle = validated_data.get("cycle")
+        mortality_quantity = validated_data.get("mortality_quantity", 0)
+        sampled_quantity = validated_data.get("sampled_quantity", 0)
         
         # Calcular pesos desde los lotes activos del estanque
         weights = BiomassCalculator.get_active_pond_weights(pond.id)
@@ -111,7 +134,60 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
         validated_data["avg_weight_g"] = weights["avg_weight_g"]
         validated_data["max_weight_g"] = weights["max_weight_g"]
         
-        return super().create(validated_data)
+        # Crear la evaluación
+        fish_evaluated = super().create(validated_data)
+        
+        # Descontar mortalidad
+        if mortality_quantity > 0:
+            if batch_id:
+                # Mortalidad específica: descontar solo del batch especificado
+                pond_batch = PondBatch.objects.filter(batch_id=batch_id, pond=pond).first()
+                if pond_batch:
+                    pond_batch.current_quantity -= mortality_quantity
+                    if pond_batch.current_quantity < 0:
+                        pond_batch.current_quantity = 0
+                    pond_batch.save(update_fields=["current_quantity"])
+                
+                # Si es 100% de mortalidad, cambiar a DEAD
+                if sampled_quantity > 0 and mortality_quantity == sampled_quantity:
+                    batch = Batch.objects.get(id=batch_id)
+                    batch.status = Batch.Status.DEAD
+                    batch.save(update_fields=["status"])
+            else:
+                # Mortalidad general: descontar proporcionalmente de todos los batches del ciclo
+                
+                # Obtener todos los batches activos del ciclo
+                pond_batches = PondBatch.objects.filter(
+                    pond__cycle_pond_batches__cycle=cycle,
+                    end_date__isnull=True
+                ).select_related("batch")
+                
+                total_quantity = pond_batches.aggregate(total=Sum("current_quantity"))["total"] or 0
+                
+                if total_quantity > 0:
+                    # Descontar proporcionalmente
+                    for pond_batch in pond_batches:
+                        proportion = pond_batch.current_quantity / total_quantity
+                        quantity_to_reduce = int(mortality_quantity * proportion)
+                        
+                        pond_batch.current_quantity -= quantity_to_reduce
+                        if pond_batch.current_quantity < 0:
+                            pond_batch.current_quantity = 0
+                        pond_batch.save(update_fields=["current_quantity"])
+        
+        # Verificar si todos los batches del ciclo están DEAD
+        all_batches_in_cycle = Batch.objects.filter(
+            pondbatch__pond__cycle_pond_batches__cycle=cycle
+        ).distinct()
+        
+        all_dead = all_batches_in_cycle.exclude(status=Batch.Status.DEAD).count() == 0
+        
+        if all_dead and all_batches_in_cycle.exists():
+            # Si todos los batches están muertos, cancelar el ciclo
+            cycle.state = Cycle.State.CANCELLED
+            cycle.save(update_fields=["state"])
+        
+        return fish_evaluated
 
 
 class ProductUsageLogSerializer(serializers.ModelSerializer):
