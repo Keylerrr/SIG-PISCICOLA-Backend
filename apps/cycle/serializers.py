@@ -179,7 +179,7 @@ class CycleSerializer(serializers.ModelSerializer):
             "updated_at",
             "deleted_at",
         ]
-        read_only_fields = ["created_at", "updated_at"]
+        read_only_fields = ["farm", "pond", "created_at", "updated_at"]
 
     def validate(self, data):
         from apps.batch.models import Batch
