@@ -19,6 +19,17 @@ from apps.purchases.utils import create_out_movement
 from .constants import FISH_EVALUATED_TYPE_HEALTH_STAT
 from .models import HealthStat, TreatmentEvent, TreatmentPlan
 
+HEALTH_STAT_DELETE_HAS_PLANS_MESSAGE = (
+    "No puede eliminar un registro de salud con planes de tratamiento asociados."
+)
+HEALTH_STAT_DELETE_HAS_FISH_EVALUATION_MESSAGE = (
+    "No puede eliminar un registro de salud vinculado a una evaluación de peces."
+)
+HEALTH_STAT_DELETE_CONFIRM_REQUIRED_MESSAGE = (
+    "El borrado es definitivo (no hay recuperación). "
+    "Confirme en la interfaz y envíe ?confirm=true."
+)
+
 
 def _fish_evaluations_qs(*, cycle, pond, **filters):
     return FishEvaluated.objects.filter(
@@ -84,6 +95,53 @@ def collect_disease_name_errors(disease_name) -> dict:
     if disease_name is not None and not str(disease_name).strip():
         return {"disease_name": "El nombre de la enfermedad es obligatorio."}
     return {}
+
+
+def health_stat_has_treatment_plans(health_stat_id: int) -> bool:
+    return TreatmentPlan.objects.filter(health_stat_id=health_stat_id).exists()
+
+
+def health_stat_has_linked_fish_evaluation(health_stat_id: int) -> bool:
+    return FishEvaluated.objects.filter(
+        type=FISH_EVALUATED_TYPE_HEALTH_STAT,
+        source_id=health_stat_id,
+        deleted_at__isnull=True,
+    ).exists()
+
+
+def health_stat_delete_blockers(health_stat_id: int) -> list[str]:
+    """Motivos por los que no se puede borrar un HealthStat (vacío = permitido)."""
+    blockers = []
+    if health_stat_has_treatment_plans(health_stat_id):
+        blockers.append(HEALTH_STAT_DELETE_HAS_PLANS_MESSAGE)
+    if health_stat_has_linked_fish_evaluation(health_stat_id):
+        blockers.append(HEALTH_STAT_DELETE_HAS_FISH_EVALUATION_MESSAGE)
+    return blockers
+
+
+def collect_health_stat_update_errors(*, health_stat: HealthStat, data: dict) -> dict:
+    """Valida PATCH de HealthStat (campos acotados)."""
+    errors = {}
+
+    if "disease_name" in data:
+        errors.update(collect_disease_name_errors(data["disease_name"]))
+
+    if "date" in data and data["date"] != health_stat.date:
+        if health_stat_has_treatment_plans(health_stat.pk):
+            errors["date"] = (
+                "No puede cambiar la fecha si el registro tiene planes de tratamiento."
+            )
+        else:
+            errors.update(
+                collect_health_stat_scope_errors(
+                    farm=health_stat.farm,
+                    cycle=health_stat.cycle,
+                    pond=health_stat.pond,
+                    stat_date=data["date"],
+                )
+            )
+
+    return errors
 
 
 def collect_prior_fish_evaluation_errors(*, cycle, pond, stat_date) -> dict:

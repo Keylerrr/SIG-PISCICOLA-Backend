@@ -14,11 +14,14 @@ from .models import HealthStat, TreatmentEvent, TreatmentPlan
 from .permissions import CanManageReviews
 from .serializers import (
     HealthStatSerializer,
+    HealthStatUpdateSerializer,
     TreatmentEventSerializer,
     TreatmentPlanSerializer,
 )
 from .utils import (
+    HEALTH_STAT_DELETE_CONFIRM_REQUIRED_MESSAGE,
     cancel_treatment_plan,
+    health_stat_delete_blockers,
     sync_treatment_plan_queryset,
     sync_treatment_plan_status,
     treatment_plan_lifecycle_state,
@@ -131,6 +134,21 @@ def _parse_optional_bool(params, key: str) -> tuple[bool | None, Response | None
     return None, _bad_request(
         f"Parámetro '{key}' inválido. Use true o false."
     )
+
+
+def _require_delete_confirmation(request) -> Response | None:
+    """
+    Borrado físico sin deleted_at: exige confirmación explícita del cliente.
+
+    El diálogo de confirmación es responsabilidad del frontend; el backend
+    solo acepta DELETE con ``?confirm=true``.
+    """
+    confirmed, err = _parse_optional_bool(request.query_params, "confirm")
+    if err:
+        return err
+    if confirmed is not True:
+        return _bad_request(HEALTH_STAT_DELETE_CONFIRM_REQUIRED_MESSAGE)
+    return None
 
 
 def _choices_payload(choices) -> list[dict]:
@@ -408,6 +426,67 @@ class CycleHealthStatDetailView(APIView):
         if not health_stat:
             return _health_stat_not_found_response()
         return Response(HealthStatSerializer(health_stat).data)
+
+    @extend_schema(
+        request=HealthStatUpdateSerializer,
+        responses={200: HealthStatSerializer},
+    )
+    def patch(self, request, farm_id, cycle_id, health_stat_id):
+        if not _get_farm(farm_id):
+            return _farm_not_found_response()
+        if not _get_cycle_in_farm(farm_id, cycle_id):
+            return _cycle_not_found_response()
+        health_stat = _get_health_stat_in_cycle(farm_id, cycle_id, health_stat_id)
+        if not health_stat:
+            return _health_stat_not_found_response()
+
+        serializer = HealthStatUpdateSerializer(
+            health_stat,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        health_stat.refresh_from_db()
+        return Response(HealthStatSerializer(health_stat).data)
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                "confirm",
+                OpenApiTypes.BOOL,
+                OpenApiParameter.QUERY,
+                description=(
+                    "Debe ser true. El frontend debe mostrar confirmación al usuario "
+                    "antes de llamar a este endpoint (borrado definitivo)."
+                ),
+                required=True,
+            ),
+        ],
+        responses={204: None},
+    )
+    def delete(self, request, farm_id, cycle_id, health_stat_id):
+        if not _get_farm(farm_id):
+            return _farm_not_found_response()
+        if not _get_cycle_in_farm(farm_id, cycle_id):
+            return _cycle_not_found_response()
+        health_stat = _get_health_stat_in_cycle(farm_id, cycle_id, health_stat_id)
+        if not health_stat:
+            return _health_stat_not_found_response()
+
+        confirm_err = _require_delete_confirmation(request)
+        if confirm_err:
+            return confirm_err
+
+        blockers = health_stat_delete_blockers(health_stat.pk)
+        if blockers:
+            return Response(
+                {"detail": blockers[0], "blockers": blockers},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        health_stat.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class HealthStatTreatmentPlanListCreateView(APIView):

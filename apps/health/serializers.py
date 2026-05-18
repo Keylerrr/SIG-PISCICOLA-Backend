@@ -13,6 +13,7 @@ from .utils import (
     clear_treatment_inventory_for_event,
     collect_combined_health_stat_payload_errors,
     collect_disease_name_errors,
+    collect_health_stat_update_errors,
     collect_health_stat_scope_errors,
     collect_prior_fish_evaluation_errors,
     collect_treatment_event_close_errors,
@@ -157,6 +158,27 @@ class HealthStatSerializer(serializers.ModelSerializer):
                 ).data,
             }
         return super().to_representation(instance)
+
+
+class HealthStatUpdateSerializer(serializers.ModelSerializer):
+    """PATCH parcial: disease_name, severity_level, comments; date solo sin planes."""
+
+    class Meta:
+        model = HealthStat
+        fields = ["disease_name", "severity_level", "comments", "date"]
+
+    def validate(self, data):
+        if not data:
+            raise serializers.ValidationError(
+                "Envíe al menos un campo para actualizar."
+            )
+        errors = collect_health_stat_update_errors(
+            health_stat=self.instance,
+            data=data,
+        )
+        if errors:
+            raise serializers.ValidationError(errors)
+        return data
 
 
 class TreatmentPlanSerializer(serializers.ModelSerializer):
@@ -619,6 +641,7 @@ class TreatmentEventSerializer(serializers.ModelSerializer):
 
 __all__ = [
     "HealthStatSerializer",
+    "HealthStatUpdateSerializer",
     "TreatmentPlanSerializer",
     "TreatmentEventSerializer",
 ]
