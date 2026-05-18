@@ -3,13 +3,21 @@ from django.urls import path
 from .views import (
     CycleHealthStatDetailView,
     CycleHealthStatListCreateView,
+    CycleTreatmentEventListView,
+    HealthOptionsView,
     HealthStatTreatmentPlanDetailView,
     HealthStatTreatmentPlanEventDetailView,
     HealthStatTreatmentPlanEventListView,
     HealthStatTreatmentPlanListCreateView,
+    TreatmentPlanOccupiedRangesView,
 )
 
 urlpatterns = [
+    path(
+        "health/options/",
+        HealthOptionsView.as_view(),
+        name="health-options",
+    ),
     path(
         "farms/<int:farm_id>/cycles/<int:cycle_id>/health-stats/",
         CycleHealthStatListCreateView.as_view(),
@@ -21,9 +29,19 @@ urlpatterns = [
         name="health-stat-detail",
     ),
     path(
+        "farms/<int:farm_id>/cycles/<int:cycle_id>/health-stats/<int:health_stat_id>/treatment-plans/occupied-ranges/",
+        TreatmentPlanOccupiedRangesView.as_view(),
+        name="treatment-plan-occupied-ranges",
+    ),
+    path(
         "farms/<int:farm_id>/cycles/<int:cycle_id>/health-stats/<int:health_stat_id>/treatment-plans/",
         HealthStatTreatmentPlanListCreateView.as_view(),
         name="treatment-plan-list",
+    ),
+    path(
+        "farms/<int:farm_id>/cycles/<int:cycle_id>/treatment-events/",
+        CycleTreatmentEventListView.as_view(),
+        name="cycle-treatment-event-list",
     ),
     path(
         "farms/<int:farm_id>/cycles/<int:cycle_id>/health-stats/<int:health_stat_id>/treatment-plans/<int:plan_id>/",

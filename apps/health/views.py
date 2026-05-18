@@ -1,6 +1,9 @@
+from datetime import datetime
+
 from django.apps import apps
 from drf_spectacular.utils import OpenApiParameter, OpenApiTypes, extend_schema
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -93,6 +96,188 @@ def _parse_optional_id(params, key: str):
     return v, None
 
 
+def _parse_optional_date(params, key: str):
+    raw = params.get(key)
+    if raw is None or raw == "":
+        return None, None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d").date(), None
+    except (TypeError, ValueError):
+        return None, _bad_request(
+            f"Parámetro '{key}' debe tener formato de fecha YYYY-MM-DD."
+        )
+
+
+def _parse_choice_param(params, key: str, *, choices) -> tuple[str | None, Response | None]:
+    raw = params.get(key)
+    if raw is None or raw == "":
+        return None, None
+    valid = {c[0] for c in choices}
+    if raw not in valid:
+        return None, _bad_request(
+            f"Parámetro '{key}' inválido. Valores: {', '.join(sorted(valid))}."
+        )
+    return raw, None
+
+
+def _parse_optional_bool(params, key: str) -> tuple[bool | None, Response | None]:
+    raw = params.get(key)
+    if raw is None or raw == "":
+        return None, None
+    if raw.lower() in ("true", "1", "yes"):
+        return True, None
+    if raw.lower() in ("false", "0", "no"):
+        return False, None
+    return None, _bad_request(
+        f"Parámetro '{key}' inválido. Use true o false."
+    )
+
+
+def _choices_payload(choices) -> list[dict]:
+    return [{"value": v, "label": lbl} for v, lbl in choices]
+
+
+def _apply_health_stat_filters(qs, params):
+    pond_id, err = _parse_optional_id(params, "pond")
+    if err:
+        return None, err
+    if pond_id is not None:
+        qs = qs.filter(pond_id=pond_id)
+
+    severity, err = _parse_choice_param(
+        params, "severity_level", choices=HealthStat.SeverityLevel.choices
+    )
+    if err:
+        return None, err
+    if severity is not None:
+        qs = qs.filter(severity_level=severity)
+
+    date_from, err = _parse_optional_date(params, "date_from")
+    if err:
+        return None, err
+    if date_from is not None:
+        qs = qs.filter(date__gte=date_from)
+
+    date_to, err = _parse_optional_date(params, "date_to")
+    if err:
+        return None, err
+    if date_to is not None:
+        qs = qs.filter(date__lte=date_to)
+
+    disease = params.get("disease_name")
+    if disease:
+        qs = qs.filter(disease_name__icontains=disease.strip())
+
+    return qs, None
+
+
+def _apply_treatment_plan_filters(qs, params):
+    status_val, err = _parse_choice_param(
+        params, "status", choices=TreatmentPlan.Status.choices
+    )
+    if err:
+        return None, err
+    if status_val is not None:
+        qs = qs.filter(status=status_val)
+
+    method, err = _parse_choice_param(
+        params,
+        "application_method",
+        choices=TreatmentPlan.ApplicationMethod.choices,
+    )
+    if err:
+        return None, err
+    if method is not None:
+        qs = qs.filter(application_method=method)
+
+    product_id, err = _parse_optional_id(params, "product")
+    if err:
+        return None, err
+    if product_id is not None:
+        qs = qs.filter(product_id=product_id)
+
+    exclude_cancelled, err = _parse_optional_bool(params, "exclude_cancelled")
+    if err:
+        return None, err
+    if exclude_cancelled is True:
+        qs = qs.exclude(status=TreatmentPlan.Status.CANCELLED)
+
+    start_from, err = _parse_optional_date(params, "start_date_from")
+    if err:
+        return None, err
+    if start_from is not None:
+        qs = qs.filter(start_date__gte=start_from)
+
+    end_to, err = _parse_optional_date(params, "end_date_to")
+    if err:
+        return None, err
+    if end_to is not None:
+        qs = qs.filter(end_date__lte=end_to)
+
+    return qs, None
+
+
+def _apply_treatment_event_filters(qs, params):
+    status_val, err = _parse_choice_param(
+        params, "status", choices=TreatmentEvent.Status.choices
+    )
+    if err:
+        return None, err
+    if status_val is not None:
+        qs = qs.filter(status=status_val)
+
+    date_from, err = _parse_optional_date(params, "date_from")
+    if err:
+        return None, err
+    if date_from is not None:
+        qs = qs.filter(date__gte=date_from)
+
+    date_to, err = _parse_optional_date(params, "date_to")
+    if err:
+        return None, err
+    if date_to is not None:
+        qs = qs.filter(date__lte=date_to)
+
+    return qs, None
+
+
+class HealthOptionsView(APIView):
+    """
+    Catálogo de valores permitidos para formularios y filtros del módulo de salud.
+
+    GET sin farm_id: enums de HealthStat, TreatmentPlan y TreatmentEvent.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(responses={200: OpenApiTypes.OBJECT})
+    def get(self, request):
+        return Response(
+            {
+                "health_stat": {
+                    "severity_level": _choices_payload(
+                        HealthStat.SeverityLevel.choices
+                    ),
+                },
+                "treatment_plan": {
+                    "status": _choices_payload(TreatmentPlan.Status.choices),
+                    "application_method": _choices_payload(
+                        TreatmentPlan.ApplicationMethod.choices
+                    ),
+                },
+                "treatment_event": {
+                    "status": _choices_payload(TreatmentEvent.Status.choices),
+                    "status_closeable": _choices_payload(
+                        (
+                            (TreatmentEvent.Status.COMPLETED, "Completado"),
+                            (TreatmentEvent.Status.SKIPPED, "Omitido"),
+                        )
+                    ),
+                },
+            }
+        )
+
+
 def _get_health_stat_in_cycle(farm_id: int, cycle_id: int, health_stat_id: int):
     try:
         return HealthStat.objects.select_related("cycle", "pond", "farm").get(
@@ -135,6 +320,12 @@ class CycleHealthStatListCreateView(APIView):
     @extend_schema(
         parameters=[
             OpenApiParameter("pond", OpenApiTypes.INT, OpenApiParameter.QUERY),
+            OpenApiParameter(
+                "severity_level", OpenApiTypes.STR, OpenApiParameter.QUERY
+            ),
+            OpenApiParameter("disease_name", OpenApiTypes.STR, OpenApiParameter.QUERY),
+            OpenApiParameter("date_from", OpenApiTypes.DATE, OpenApiParameter.QUERY),
+            OpenApiParameter("date_to", OpenApiTypes.DATE, OpenApiParameter.QUERY),
         ],
         responses={200: HealthStatSerializer(many=True)},
     )
@@ -148,11 +339,9 @@ class CycleHealthStatListCreateView(APIView):
             farm_id=farm_id,
             cycle_id=cycle_id,
         ).select_related("cycle", "pond", "farm")
-        pond_id, err = _parse_optional_id(request.query_params, "pond")
+        qs, err = _apply_health_stat_filters(qs, request.query_params)
         if err:
             return err
-        if pond_id is not None:
-            qs = qs.filter(pond_id=pond_id)
         qs = qs.order_by("-date", "-created_at")
         return Response(HealthStatSerializer(qs, many=True).data)
 
@@ -230,6 +419,17 @@ class HealthStatTreatmentPlanListCreateView(APIView):
     @extend_schema(
         parameters=[
             OpenApiParameter("status", OpenApiTypes.STR, OpenApiParameter.QUERY),
+            OpenApiParameter(
+                "application_method", OpenApiTypes.STR, OpenApiParameter.QUERY
+            ),
+            OpenApiParameter("product", OpenApiTypes.INT, OpenApiParameter.QUERY),
+            OpenApiParameter(
+                "exclude_cancelled", OpenApiTypes.BOOL, OpenApiParameter.QUERY
+            ),
+            OpenApiParameter(
+                "start_date_from", OpenApiTypes.DATE, OpenApiParameter.QUERY
+            ),
+            OpenApiParameter("end_date_to", OpenApiTypes.DATE, OpenApiParameter.QUERY),
         ],
         responses={200: TreatmentPlanSerializer(many=True)},
     )
@@ -245,9 +445,9 @@ class HealthStatTreatmentPlanListCreateView(APIView):
             farm_id=farm_id,
             health_stat_id=health_stat_id,
         ).select_related("health_stat", "product", "unit", "farm")
-        status_filter = request.query_params.get("status")
-        if status_filter:
-            qs = qs.filter(status=status_filter)
+        qs, err = _apply_treatment_plan_filters(qs, request.query_params)
+        if err:
+            return err
         qs = qs.order_by("-created_at")
         sync_treatment_plan_queryset(qs)
         return Response(TreatmentPlanSerializer(qs, many=True).data)
@@ -440,11 +640,117 @@ class HealthStatTreatmentPlanDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+class TreatmentPlanOccupiedRangesView(APIView):
+    """Rangos de fechas de planes vigentes de un registro de salud (evitar solapes en UI)."""
+
+    def get_permissions(self):
+        return [AdminOr(IsFarmMember)()]
+
+    @extend_schema(responses={200: OpenApiTypes.OBJECT})
+    def get(self, request, farm_id, cycle_id, health_stat_id):
+        if not _get_farm(farm_id):
+            return _farm_not_found_response()
+        if not _get_cycle_in_farm(farm_id, cycle_id):
+            return _cycle_not_found_response()
+        if not _get_health_stat_in_cycle(farm_id, cycle_id, health_stat_id):
+            return _health_stat_not_found_response()
+
+        qs = (
+            TreatmentPlan.objects.filter(
+                farm_id=farm_id,
+                health_stat_id=health_stat_id,
+            )
+            .exclude(status=TreatmentPlan.Status.CANCELLED)
+            .order_by("start_date", "pk")
+            .values("id", "start_date", "end_date", "status")
+        )
+        return Response(
+            {
+                "health_stat_id": health_stat_id,
+                "ranges": list(qs),
+            }
+        )
+
+
+class CycleTreatmentEventListView(APIView):
+    """
+    Eventos de tratamiento del ciclo (calendario / bandeja operativa).
+
+    Equivalente al listado por ciclo de feeding-events.
+    """
+
+    def get_permissions(self):
+        return [AdminOr(IsFarmMember)()]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("pond", OpenApiTypes.INT, OpenApiParameter.QUERY),
+            OpenApiParameter("health_stat", OpenApiTypes.INT, OpenApiParameter.QUERY),
+            OpenApiParameter("plan", OpenApiTypes.INT, OpenApiParameter.QUERY),
+            OpenApiParameter("status", OpenApiTypes.STR, OpenApiParameter.QUERY),
+            OpenApiParameter("date_from", OpenApiTypes.DATE, OpenApiParameter.QUERY),
+            OpenApiParameter("date_to", OpenApiTypes.DATE, OpenApiParameter.QUERY),
+        ],
+        responses={200: TreatmentEventSerializer(many=True)},
+    )
+    def get(self, request, farm_id, cycle_id):
+        if not _get_farm(farm_id):
+            return _farm_not_found_response()
+        if not _get_cycle_in_farm(farm_id, cycle_id):
+            return _cycle_not_found_response()
+
+        qs = TreatmentEvent.objects.filter(
+            farm_id=farm_id,
+            cycle_id=cycle_id,
+        ).select_related(
+            "cycle",
+            "treatment_plan",
+            "treatment_plan__health_stat",
+            "treatment_plan__health_stat__pond",
+            "farm",
+            "planned_unit",
+            "actual_unit",
+            "completed_by",
+        ).exclude(treatment_plan__status=TreatmentPlan.Status.CANCELLED)
+
+        pond_id, err = _parse_optional_id(request.query_params, "pond")
+        if err:
+            return err
+        if pond_id is not None:
+            qs = qs.filter(treatment_plan__health_stat__pond_id=pond_id)
+
+        health_stat_id, err = _parse_optional_id(request.query_params, "health_stat")
+        if err:
+            return err
+        if health_stat_id is not None:
+            qs = qs.filter(treatment_plan__health_stat_id=health_stat_id)
+
+        plan_id, err = _parse_optional_id(request.query_params, "plan")
+        if err:
+            return err
+        if plan_id is not None:
+            qs = qs.filter(treatment_plan_id=plan_id)
+
+        qs, err = _apply_treatment_event_filters(qs, request.query_params)
+        if err:
+            return err
+
+        qs = qs.order_by("date", "scheduled_time", "application_number")
+        return Response(TreatmentEventSerializer(qs, many=True).data)
+
+
 class HealthStatTreatmentPlanEventListView(APIView):
     def get_permissions(self):
         return [AdminOr(IsFarmMember)()]
 
-    @extend_schema(responses={200: TreatmentEventSerializer(many=True)})
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("status", OpenApiTypes.STR, OpenApiParameter.QUERY),
+            OpenApiParameter("date_from", OpenApiTypes.DATE, OpenApiParameter.QUERY),
+            OpenApiParameter("date_to", OpenApiTypes.DATE, OpenApiParameter.QUERY),
+        ],
+        responses={200: TreatmentEventSerializer(many=True)},
+    )
     def get(self, request, farm_id, cycle_id, health_stat_id, plan_id):
         if not _get_farm(farm_id):
             return _farm_not_found_response()
@@ -470,6 +776,9 @@ class HealthStatTreatmentPlanEventListView(APIView):
             "actual_unit",
             "completed_by",
         )
+        qs, err = _apply_treatment_event_filters(qs, request.query_params)
+        if err:
+            return err
         qs = qs.order_by("date", "scheduled_time", "application_number")
         return Response(TreatmentEventSerializer(qs, many=True).data)
 
