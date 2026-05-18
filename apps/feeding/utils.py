@@ -151,7 +151,33 @@ def collect_feeding_plan_business_errors(
     return errors
 
 
-def register_feeding_consume(feeding_event: FeedingEvent):
+def _feeding_out_movement_for_event(event_id: int):
+    return InventoryMovement.objects.filter(
+        source_type=InventoryMovement.SourceType.FEEDING,
+        source_id=event_id,
+        movement_type=InventoryMovement.MovementType.OUT,
+    ).first()
+
+
+def _delete_feeding_out_movement(event_id: int) -> None:
+    InventoryMovement.objects.filter(
+        source_type=InventoryMovement.SourceType.FEEDING,
+        source_id=event_id,
+        movement_type=InventoryMovement.MovementType.OUT,
+    ).delete()
+
+
+def clear_feeding_inventory_for_event(event_id: int) -> None:
+    """Elimina la salida de inventario del evento (p. ej. al omitir o revertir)."""
+    _delete_feeding_out_movement(event_id)
+
+
+def sync_feeding_inventory_for_event(feeding_event: FeedingEvent):
+    """
+    Alinea el movimiento OUT de inventario con la cantidad real del evento.
+
+    Elimina y recrea el movimiento si la cantidad cambió (p. ej. corrección).
+    """
     try:
         fe = FeedingEvent.objects.select_related(
             "farm",
@@ -161,26 +187,47 @@ def register_feeding_consume(feeding_event: FeedingEvent):
             "feeding_plan__feeding_schedule__product",
             "feeding_plan__feeding_schedule__product__unit",
         ).get(pk=feeding_event.pk)
-
-        product = fe.feeding_plan.feeding_schedule.product
-        qty_stock = quantity_in_product_unit(
-            Decimal(str(feeding_event.actual_quantity)),
-            feeding_event.actual_unit,
-            product.unit,
-        )
-        return create_out_movement(
-            farm=fe.farm,
-            product=product,
-            quantity=float(qty_stock),
-            source_type=InventoryMovement.SourceType.FEEDING,
-            source_id=fe.id,
-            pond=fe.cycle.pond,
-            cycle=fe.cycle,
-        )
     except FeedingEvent.DoesNotExist:
         raise ValueError("El evento de alimentación no existe.") from None
-    except ValueError:
-        raise
+
+    product = fe.feeding_plan.feeding_schedule.product
+    if product.deleted_at is not None:
+        raise ValueError("El producto del cronograma no está disponible.")
+
+    if feeding_event.actual_quantity is None or feeding_event.actual_unit is None:
+        raise ValueError(
+            "La cantidad real y la unidad son obligatorias para descontar inventario."
+        )
+
+    qty_stock = quantity_in_product_unit(
+        Decimal(str(feeding_event.actual_quantity)),
+        feeding_event.actual_unit,
+        product.unit,
+    )
+    existing = _feeding_out_movement_for_event(fe.pk)
+    if existing is not None:
+        if Decimal(str(existing.quantity)) == qty_stock:
+            return existing
+        _delete_feeding_out_movement(fe.pk)
+
+    return create_out_movement(
+        farm=fe.farm,
+        product=product,
+        quantity=float(qty_stock),
+        source_type=InventoryMovement.SourceType.FEEDING,
+        source_id=fe.pk,
+        pond=fe.cycle.pond,
+        cycle=fe.cycle,
+        observations=(
+            f"Alimentación — ración {fe.ration_number} "
+            f"({fe.date} {fe.scheduled_time})"
+        ),
+    )
+
+
+def register_feeding_consume(feeding_event: FeedingEvent):
+    """Descuenta inventario al completar (idempotente si ya está sincronizado)."""
+    return sync_feeding_inventory_for_event(feeding_event)
 
 
 def cycle_fish_count_and_avg_weight_g(cycle_id: int) -> tuple[Decimal, Decimal] | None:
