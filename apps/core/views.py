@@ -6,7 +6,7 @@ from .seralizers import AlertSerializer, AuditLogSerializer, UnitSerializer
 
 
 class UnitView(viewsets.ModelViewSet):
-    permission_classes = [IsAdmin]
+    permission_classes = [AllowAny]
     queryset = Unit.objects.all()
     serializer_class = UnitSerializer
 
