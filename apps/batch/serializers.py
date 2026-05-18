@@ -106,10 +106,10 @@ class PondBatchSerializer(serializers.ModelSerializer):
                 "pond": "El estanque ha sido eliminado y no está disponible."
             })
 
-        # Validar que el estanque esté en estado ACTIVE
-        if pond and pond.status != pond.Status.ACTIVE:
+        # Validar que el estanque esté en estado ACTIVE o IN_USE
+        if pond and pond.status not in [pond.Status.ACTIVE, pond.Status.IN_USE]:
             raise serializers.ValidationError({
-                "pond": f"Solo se pueden agregar lotes a estanques en estado ACTIVO. "
+                "pond": f"Solo se pueden agregar lotes a estanques en estado ACTIVO o EN USO. "
                         f"Estado actual: '{pond.get_status_display()}'."
             })
 
