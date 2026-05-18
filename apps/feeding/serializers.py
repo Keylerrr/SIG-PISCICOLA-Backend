@@ -130,11 +130,12 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
         ]
 
         extra_kwargs = {
-            field: {"required": False, "allow_null": True}
-            for field in (
-                *_REFERENCE_DEFAULT_FIELDS,
-                *_REFERENCE_WEIGHT_FIELDS,
-            )
+            "pellet_size_mm": {"required": False, "allow_null": True},
+            "feeding_rate_percentage": {"required": False, "allow_null": True},
+            "expected_fca": {"required": False, "allow_null": True},
+            "expected_daily_gain_g": {"required": False, "allow_null": True},
+            "aceptable_min_weight_g": {"required": False, "allow_null": True},
+            "aceptable_max_weight_g": {"required": False, "allow_null": True},
         }
 
     _SCHEDULE_PATCH_FORBIDDEN = {
