@@ -1,6 +1,7 @@
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError
 
 from apps.accounts.permissions import AdminOr
 from apps.farms.permissions import IsFarmMember
@@ -30,10 +31,18 @@ class FishEvaluatedViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")
+        pond_pk = self.kwargs.get("pond_pk")
         cycle_id = self.kwargs.get("cycle_pk")
+        
+        if not pond_pk or not cycle_id:
+            raise ValidationError(
+                "Debe especificar estanque (pond_pk) y ciclo (cycle_pk). "
+                "Use: /farms/<farm_pk>/ponds/<pond_pk>/cycles/<cycle_pk>/fish-evaluations/"
+            )
 
         qs = FishEvaluated.objects.filter(
             cycle__farm_id=farm_id,
+            cycle__pond_id=pond_pk,
             cycle_id=cycle_id,
             deleted_at__isnull=True,
         ).select_related("cycle", "pond")
@@ -67,15 +76,23 @@ class DailyStatViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")
+        pond_pk = self.kwargs.get("pond_pk")
         cycle_id = self.kwargs.get("cycle_pk")
-
+        
         qs = DailyStat.objects.filter(
             cycle__farm_id=farm_id,
             deleted_at__isnull=True,
         ).select_related("cycle", "pond").prefetch_related("product_usages")
 
+        # Si viene cycle_pk en URL, validar pond_pk también
         if cycle_id:
-            qs = qs.filter(cycle_id=cycle_id)
+            if not pond_pk:
+                raise ValidationError(
+                    "Debe especificar estanque (pond_pk). "
+                    "Use: /farms/<farm_pk>/ponds/<pond_pk>/cycles/<cycle_pk>/daily-stats/"
+                )
+            qs = qs.filter(cycle_id=cycle_id, cycle__pond_id=pond_pk)
+        # Si no viene cycle_pk, es lista por granja (sin validación de pond)
 
         return qs.order_by("-stat_date", "-created_at")
 
@@ -108,6 +125,7 @@ class ControlStatViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")
+        pond_pk = self.kwargs.get("pond_pk")
         cycle_id = self.kwargs.get("cycle_pk")
 
         qs = ControlStat.objects.filter(
@@ -115,8 +133,15 @@ class ControlStatViewSet(viewsets.ModelViewSet):
             deleted_at__isnull=True,
         ).select_related("cycle", "pond")
 
+        # Si viene cycle_pk en URL, validar pond_pk también
         if cycle_id:
-            qs = qs.filter(cycle_id=cycle_id)
+            if not pond_pk:
+                raise ValidationError(
+                    "Debe especificar estanque (pond_pk). "
+                    "Use: /farms/<farm_pk>/ponds/<pond_pk>/cycles/<cycle_pk>/control-stats/"
+                )
+            qs = qs.filter(cycle_id=cycle_id, cycle__pond_id=pond_pk)
+        # Si no viene cycle_pk, es lista por granja (sin validación de pond)
 
         return qs.order_by("-control_date")
 

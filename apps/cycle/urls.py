@@ -49,17 +49,17 @@ urlpatterns = [
         name="pond-cycle-detail",
     ),
     path(
-        "farms/<int:farm_pk>/cycle-batches/",
+        "farms/<int:farm_pk>/ponds/<int:pond_pk>/cycles/<int:cycle_pk>/cycle-batches/",
         CyclePondBatchViewSet.as_view(
             {
                 "get": "list",
                 "post": "create",
             }
         ),
-        name="cycle-batch-list",
+        name="pond-cycle-batch-list",
     ),
     path(
-        "farms/<int:farm_pk>/cycle-batches/<int:pk>/",
+        "farms/<int:farm_pk>/ponds/<int:pond_pk>/cycles/<int:cycle_pk>/cycle-batches/<int:pk>/",
         CyclePondBatchViewSet.as_view(
             {
                 "get": "retrieve",
@@ -67,27 +67,6 @@ urlpatterns = [
                 "delete": "destroy",
             }
         ),
-        name="cycle-batch-detail",
-    ),
-    path(
-        "farms/<int:farm_pk>/cycles/<int:cycle_pk>/cycle-batches/",
-        CyclePondBatchViewSet.as_view(
-            {
-                "get": "list",
-                "post": "create",
-            }
-        ),
-        name="cycle-cycle-batch-list",
-    ),
-    path(
-        "farms/<int:farm_pk>/cycles/<int:cycle_pk>/cycle-batches/<int:pk>/",
-        CyclePondBatchViewSet.as_view(
-            {
-                "get": "retrieve",
-                "patch": "partial_update",
-                "delete": "destroy",
-            }
-        ),
-        name="cycle-cycle-batch-detail",
+        name="pond-cycle-batch-detail",
     ),
 ]
