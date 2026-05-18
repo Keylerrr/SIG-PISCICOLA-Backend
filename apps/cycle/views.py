@@ -2,6 +2,7 @@ from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.response import Response
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 
 from apps.accounts.permissions import AdminOr
 from apps.farms.permissions import IsFarmMember, CanManageCycle
@@ -50,10 +51,20 @@ class CycleViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")
+        pond_pk = self.kwargs.get("pond_pk")
+        
+        # Requerir pond_pk - los ciclos SOLO se ven por estanque específico
+        if not pond_pk:
+            raise ValidationError(
+                "Debe especificar un estanque (pond_pk). "
+                "Use: /farms/<farm_pk>/ponds/<pond_pk>/cycles/"
+            )
+        
         queryset = Cycle.objects.filter(
             farm_id=farm_id,
+            pond_id=pond_pk,
             deleted_at__isnull=True,
-        ).select_related("production_plan")
+        ).select_related("production_plan", "pond")
         
         # Filtrar por especie si se proporciona
         specie_id = self.request.query_params.get("specie_id")
@@ -71,7 +82,8 @@ class CycleViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         farm_id = self.kwargs.get("farm_pk")
-        serializer.save(farm_id=farm_id)
+        pond_pk = self.kwargs.get("pond_pk")
+        serializer.save(farm_id=farm_id, pond_id=pond_pk)
 
     def destroy(self, request, *args, **kwargs):
         cycle = self.get_object()
@@ -170,4 +182,9 @@ class CyclePondBatchViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        serializer.save()
+        """Al crear un CyclePondBatch, asegurar que sea del mismo estanque del ciclo."""
+        cycle_id = self.kwargs.get("cycle_pk")
+        cycle = Cycle.objects.get(id=cycle_id)
+        
+        # La validación de que pond_batch.pond == cycle.pond se ejecutará en el clean() del modelo
+        serializer.save(cycle=cycle)

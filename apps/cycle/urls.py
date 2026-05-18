@@ -28,17 +28,17 @@ urlpatterns = [
         name="production-plan-detail",
     ),
     path(
-        "farms/<int:farm_pk>/cycles/",
+        "farms/<int:farm_pk>/ponds/<int:pond_pk>/cycles/",
         CycleViewSet.as_view(
             {
                 "get": "list",
                 "post": "create",
             }
         ),
-        name="cycle-list",
+        name="pond-cycle-list",
     ),
     path(
-        "farms/<int:farm_pk>/cycles/<int:pk>/",
+        "farms/<int:farm_pk>/ponds/<int:pond_pk>/cycles/<int:pk>/",
         CycleViewSet.as_view(
             {
                 "get": "retrieve",
@@ -46,7 +46,7 @@ urlpatterns = [
                 "delete": "destroy",
             }
         ),
-        name="cycle-detail",
+        name="pond-cycle-detail",
     ),
     path(
         "farms/<int:farm_pk>/cycle-batches/",
