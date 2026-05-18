@@ -196,7 +196,7 @@ class CycleHealthStatListCreateView(APIView):
 
         serializer = HealthStatSerializer(
             data=body,
-            context={"request": request},
+            context={"request": request, "farm": farm},
         )
         serializer.is_valid(raise_exception=True)
         serializer.save()

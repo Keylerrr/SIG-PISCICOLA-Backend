@@ -16,7 +16,44 @@ from apps.ponds.models import Pond
 from apps.purchases.models import InventoryMovement
 from apps.purchases.utils import create_out_movement
 
+from .constants import FISH_EVALUATED_TYPE_HEALTH_STAT
 from .models import HealthStat, TreatmentEvent, TreatmentPlan
+
+
+def _fish_evaluations_qs(*, cycle, pond, **filters):
+    return FishEvaluated.objects.filter(
+        cycle=cycle,
+        pond=pond,
+        deleted_at__isnull=True,
+        **filters,
+    )
+
+
+def link_fish_evaluation_to_health_stat(
+    *,
+    fish_evaluation: FishEvaluated,
+    health_stat: HealthStat,
+    created_by=None,
+) -> FishEvaluated:
+    """Vincula la evaluación de peces al registro de salud (type + source_id)."""
+    update_fields = []
+    if fish_evaluation.type != FishEvaluated.Type.HEALTH_STAT:
+        fish_evaluation.type = FishEvaluated.Type.HEALTH_STAT
+        update_fields.append("type")
+    if fish_evaluation.source_id != health_stat.pk:
+        fish_evaluation.source_id = health_stat.pk
+        update_fields.append("source_id")
+    if fish_evaluation.farm_id != health_stat.farm_id:
+        fish_evaluation.farm_id = health_stat.farm_id
+        update_fields.append("farm")
+    if created_by is not None:
+        user_id = getattr(created_by, "pk", created_by)
+        if fish_evaluation.created_by_id != user_id:
+            fish_evaluation.created_by_id = user_id
+            update_fields.append("created_by")
+    if update_fields:
+        fish_evaluation.save(update_fields=update_fields)
+    return fish_evaluation
 
 
 def collect_health_stat_scope_errors(*, farm, cycle, pond, stat_date) -> dict:
@@ -50,11 +87,10 @@ def collect_disease_name_errors(disease_name) -> dict:
 
 
 def collect_prior_fish_evaluation_errors(*, cycle, pond, stat_date) -> dict:
-    has_eval = FishEvaluated.objects.filter(
+    has_eval = _fish_evaluations_qs(
         cycle=cycle,
         pond=pond,
         evaluation_date__lte=stat_date,
-        deleted_at__isnull=True,
     ).exists()
     if not has_eval:
         return {
@@ -66,7 +102,14 @@ def collect_prior_fish_evaluation_errors(*, cycle, pond, stat_date) -> dict:
     return {}
 
 
-def build_fish_evaluated_payload(*, cycle, pond, stat_date, fish: dict) -> dict:
+def build_fish_evaluated_payload(
+    *,
+    cycle,
+    pond,
+    stat_date,
+    fish: dict,
+    farm=None,
+) -> dict:
     """Arma el body que espera ``FishEvaluatedSerializer`` (monitoring)."""
     eval_date = fish.get("evaluation_date") or stat_date
     payload = {
@@ -76,7 +119,10 @@ def build_fish_evaluated_payload(*, cycle, pond, stat_date, fish: dict) -> dict:
         "sampled_quantity": fish["sampled_quantity"],
         "mortality_quantity": fish.get("mortality_quantity", 0),
         "observations": fish.get("observations"),
+        "type": FISH_EVALUATED_TYPE_HEALTH_STAT,
     }
+    if farm is not None:
+        payload["farm"] = getattr(farm, "pk", farm)
     if fish.get("batch_id") is not None:
         payload["batch_id"] = fish["batch_id"]
     return payload
@@ -115,7 +161,11 @@ def validate_fish_evaluation_with_monitoring(
         return {"sampled_quantity": "Este campo es obligatorio."}
 
     payload = build_fish_evaluated_payload(
-        cycle=cycle, pond=pond, stat_date=stat_date, fish=fish
+        cycle=cycle,
+        pond=pond,
+        stat_date=stat_date,
+        fish=fish,
+        farm=serializer_context.get("farm"),
     )
     eval_serializer = FishEvaluatedSerializer(
         data=payload,
@@ -142,11 +192,10 @@ def collect_combined_health_stat_payload_errors(
             "La fecha del muestreo no puede ser posterior a la fecha del registro de salud."
         )
 
-    if FishEvaluated.objects.filter(
+    if _fish_evaluations_qs(
         cycle=cycle,
         pond=pond,
         evaluation_date=eval_date,
-        deleted_at__isnull=True,
     ).exists():
         errors.setdefault(
             "date",
@@ -175,8 +224,17 @@ def create_health_stat_with_fish_evaluation(
     stat_date = validated_data["date"]
 
     with transaction.atomic():
+        health_stat = create_health_stat(
+            validated_data=validated_data,
+            created_by=created_by,
+        )
+
         payload = build_fish_evaluated_payload(
-            cycle=cycle, pond=pond, stat_date=stat_date, fish=fish
+            cycle=cycle,
+            pond=pond,
+            stat_date=stat_date,
+            fish=fish,
+            farm=validated_data.get("farm"),
         )
         eval_serializer = FishEvaluatedSerializer(
             data=payload,
@@ -184,9 +242,9 @@ def create_health_stat_with_fish_evaluation(
         )
         eval_serializer.is_valid(raise_exception=True)
         fish_evaluation = eval_serializer.save()
-
-        health_stat = create_health_stat(
-            validated_data=validated_data,
+        link_fish_evaluation_to_health_stat(
+            fish_evaluation=fish_evaluation,
+            health_stat=health_stat,
             created_by=created_by,
         )
 

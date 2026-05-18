@@ -91,13 +91,16 @@ class HealthStatSerializer(serializers.ModelSerializer):
                     for key in FISH_EVALUATION_CREATE_FIELDS
                     if key in data
                 }
+                eval_context = dict(self.context)
+                if farm is not None:
+                    eval_context["farm"] = farm
                 errors.update(
                     validate_fish_evaluation_with_monitoring(
                         cycle=cycle,
                         pond=pond,
                         stat_date=stat_date,
                         fish=fish,
-                        serializer_context=self.context,
+                        serializer_context=eval_context,
                     )
                 )
                 errors.update(
