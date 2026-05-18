@@ -9,6 +9,8 @@ from django.utils import timezone
 from apps.cycle.models import Cycle, CyclePondBatch
 from apps.purchases.models import InventoryMovement
 from apps.purchases.utils import create_out_movement
+from apps.monitoring.services import BiomassCalculator
+
 
 from .models import FeedingEvent, FeedingPlan, FeedingSchedule
 
@@ -23,10 +25,19 @@ _MASS_GRAMS_PER_UNIT_SYMBOL = {
 }
 
 
+def normalize_unit_symbol(symbol: str | None) -> str:
+    """
+    Normaliza símbolos de unidad para comparar (p. ej. ``"Kg"`` en BD → ``"kg"``).
+    """
+    return (symbol or "").strip().lower()
+
+
 def _mass_grams_per_unit_symbol(unit) -> Decimal | None:
     if unit is None:
         return None
-    key = (getattr(unit, "symbol", None) or "").strip().lower()
+    key = normalize_unit_symbol(getattr(unit, "symbol", None))
+    if not key:
+        return None
     return _MASS_GRAMS_PER_UNIT_SYMBOL.get(key)
 
 
@@ -119,9 +130,15 @@ def register_feeding_consume(feeding_event: FeedingEvent):
 
 
 def cycle_fish_count_and_avg_weight_g(cycle_id: int) -> tuple[Decimal, Decimal] | None:
+    """
+    Peces vivos y peso promedio ponderado del ciclo.
+
+    Usa ``pond_batch.current_quantity`` (stock operativo) y ``avg_weight_g`` de
+    cada ``CyclePondBatch``.
+    """
     rows = list(
         CyclePondBatch.objects.filter(cycle_id=cycle_id).values_list(
-            "quantity", "avg_weight_g"
+            "pond_batch__current_quantity", "avg_weight_g"
         )
     )
     if not rows:
@@ -132,6 +149,87 @@ def cycle_fish_count_and_avg_weight_g(cycle_id: int) -> tuple[Decimal, Decimal] 
     weighted = sum(Decimal(q) * Decimal(str(w)) for q, w in rows)
     avg_g = weighted / Decimal(total_fish)
     return Decimal(total_fish), avg_g
+
+
+def _biomass_kg_from_stock(fish_count: Decimal, avg_g: Decimal) -> Decimal:
+    biomass = BiomassCalculator.calculate_biomass(int(fish_count), float(avg_g))
+    return Decimal(str(biomass)).quantize(Decimal("0.01"))
+
+
+def cycle_stock_snapshot(cycle_id: int) -> dict | None:
+    """
+    Stock del ciclo en una sola consulta: peces, peso promedio y biomasa (kg).
+
+    Returns:
+        ``None`` si el ciclo no tiene lotes con peces.
+    """
+    stock = cycle_fish_count_and_avg_weight_g(cycle_id)
+    if not stock:
+        return None
+    fish_count, avg_g = stock
+    return {
+        "current_quantity_total": int(fish_count),
+        "current_avg_weight_g": avg_g,
+        "current_biomass_kg": _biomass_kg_from_stock(fish_count, avg_g),
+    }
+
+
+def feeding_event_feed_consumed_kg_until(
+    event: FeedingEvent,
+    *,
+    start_date=None,
+) -> Decimal:
+    """
+    Alimento consumido (kg) desde ``start_date`` hasta la fecha del evento.
+
+    Por defecto usa ``cycle.start_date``.
+    """
+    if start_date is None:
+        cycle = Cycle.objects.get(pk=event.cycle_id)
+        start_date = cycle.start_date
+    return cycle_feed_consumed_kg(
+        event.cycle_id,
+        start_date=start_date,
+        end_date=event.date,
+    )
+
+
+def feed_quantity_to_kg(quantity: Decimal, unit) -> Decimal:
+    """Convierte una cantidad de alimento a kilogramos según la unidad de masa."""
+    g_per = _mass_grams_per_unit_symbol(unit)
+    if g_per is None:
+        raise ValueError(
+            "No se puede convertir la cantidad de alimento a kg: unidad no soportada "
+            f"({getattr(unit, 'symbol', '')})."
+        )
+    return (quantity * g_per / Decimal("1000")).quantize(Decimal("0.0001"))
+
+
+def cycle_feed_consumed_kg(
+    cycle_id: int,
+    *,
+    start_date=None,
+    end_date=None,
+) -> Decimal:
+    """
+    Suma el alimento real consumido (eventos completados) en un rango de fechas,
+    expresado en kg.
+    """
+    qs = FeedingEvent.objects.filter(
+        cycle_id=cycle_id,
+        status=FeedingEvent.Status.COMPLETED,
+        actual_quantity__isnull=False,
+        actual_unit__isnull=False,
+    ).select_related("actual_unit")
+    if start_date is not None:
+        qs = qs.filter(date__gte=start_date)
+    if end_date is not None:
+        qs = qs.filter(date__lte=end_date)
+
+    total = Decimal("0")
+    for ev in qs:
+        total += feed_quantity_to_kg(Decimal(str(ev.actual_quantity)), ev.actual_unit)
+    return total.quantize(Decimal("0.01"))
 
 
 def planned_feed_quantity_per_ration(
