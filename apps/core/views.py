@@ -1,4 +1,5 @@
 from rest_framework import viewsets
+from rest_framework.permissions import AllowAny
 
 from ..accounts.permissions import IsAdmin
 from .models import Alert, AuditLog, Unit
