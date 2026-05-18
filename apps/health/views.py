@@ -46,19 +46,33 @@ def _farm_not_found_response():
 
 def _cycle_not_found_response():
     return Response(
-        {"detail": "Ciclo no encontrado."},
+        {"detail": "Ciclo no encontrado en este estanque."},
         status=status.HTTP_404_NOT_FOUND,
     )
 
 
-def _get_cycle_in_farm(farm_id: int, cycle_id: int):
+def _get_cycle_in_pond(farm_pk: int, pond_pk: int, cycle_pk: int):
     Cycle = apps.get_model("cycle", "Cycle")
     try:
         return Cycle.objects.get(
-            pk=cycle_id, farm_id=farm_id, deleted_at__isnull=True
+            pk=cycle_pk,
+            farm_id=farm_pk,
+            pond_id=pond_pk,
+            deleted_at__isnull=True,
         )
     except Cycle.DoesNotExist:
         return None
+
+
+def _validate_pond_cycle_scope(farm_pk: int, pond_pk: int, cycle_pk: int):
+    """Valida granja + ciclo del estanque. Retorna (farm, cycle, error_response)."""
+    farm = _get_farm(farm_pk)
+    if not farm:
+        return None, None, _farm_not_found_response()
+    cycle = _get_cycle_in_pond(farm_pk, pond_pk, cycle_pk)
+    if not cycle:
+        return None, None, _cycle_not_found_response()
+    return farm, cycle, None
 
 
 def _health_stat_not_found_response():
@@ -156,12 +170,6 @@ def _choices_payload(choices) -> list[dict]:
 
 
 def _apply_health_stat_filters(qs, params):
-    pond_id, err = _parse_optional_id(params, "pond")
-    if err:
-        return None, err
-    if pond_id is not None:
-        qs = qs.filter(pond_id=pond_id)
-
     severity, err = _parse_choice_param(
         params, "severity_level", choices=HealthStat.SeverityLevel.choices
     )
@@ -296,12 +304,15 @@ class HealthOptionsView(APIView):
         )
 
 
-def _get_health_stat_in_cycle(farm_id: int, cycle_id: int, health_stat_id: int):
+def _get_health_stat_in_scope(
+    farm_pk: int, pond_pk: int, cycle_pk: int, health_stat_id: int
+):
     try:
         return HealthStat.objects.select_related("cycle", "pond", "farm").get(
             pk=health_stat_id,
-            farm_id=farm_id,
-            cycle_id=cycle_id,
+            farm_id=farm_pk,
+            cycle_id=cycle_pk,
+            pond_id=pond_pk,
         )
     except HealthStat.DoesNotExist:
         return None
@@ -337,7 +348,6 @@ class CycleHealthStatListCreateView(APIView):
 
     @extend_schema(
         parameters=[
-            OpenApiParameter("pond", OpenApiTypes.INT, OpenApiParameter.QUERY),
             OpenApiParameter(
                 "severity_level", OpenApiTypes.STR, OpenApiParameter.QUERY
             ),
@@ -347,15 +357,15 @@ class CycleHealthStatListCreateView(APIView):
         ],
         responses={200: HealthStatSerializer(many=True)},
     )
-    def get(self, request, farm_id, cycle_id):
-        if not _get_farm(farm_id):
-            return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
-            return _cycle_not_found_response()
+    def get(self, request, farm_pk, pond_pk, cycle_pk):
+        _, _, err = _validate_pond_cycle_scope(farm_pk, pond_pk, cycle_pk)
+        if err:
+            return err
 
         qs = HealthStat.objects.filter(
-            farm_id=farm_id,
-            cycle_id=cycle_id,
+            farm_id=farm_pk,
+            cycle_id=cycle_pk,
+            pond_id=pond_pk,
         ).select_related("cycle", "pond", "farm")
         qs, err = _apply_health_stat_filters(qs, request.query_params)
         if err:
@@ -367,12 +377,10 @@ class CycleHealthStatListCreateView(APIView):
         request=HealthStatSerializer,
         responses={201: HealthStatSerializer},
     )
-    def post(self, request, farm_id, cycle_id):
-        farm = _get_farm(farm_id)
-        if not farm:
-            return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
-            return _cycle_not_found_response()
+    def post(self, request, farm_pk, pond_pk, cycle_pk):
+        farm, _, err = _validate_pond_cycle_scope(farm_pk, pond_pk, cycle_pk)
+        if err:
+            return err
 
         body = (
             request.data.copy()
@@ -382,24 +390,35 @@ class CycleHealthStatListCreateView(APIView):
         raw_farm = body.get("farm")
         if raw_farm is not None:
             try:
-                if int(raw_farm) != farm_id:
+                if int(raw_farm) != farm_pk:
                     return _bad_request(
                         "El campo «farm» del cuerpo debe coincidir con la granja de la URL."
                     )
             except (TypeError, ValueError):
                 return _bad_request("El campo «farm» debe ser un entero válido.")
-        body["farm"] = farm_id
+        body["farm"] = farm_pk
+
+        raw_pond = body.get("pond")
+        if raw_pond is not None:
+            try:
+                if int(raw_pond) != pond_pk:
+                    return _bad_request(
+                        "El campo «pond» del cuerpo debe coincidir con el estanque de la URL."
+                    )
+            except (TypeError, ValueError):
+                return _bad_request("El campo «pond» debe ser un entero válido.")
+        body["pond"] = pond_pk
 
         raw_cycle = body.get("cycle")
         if raw_cycle is not None:
             try:
-                if int(raw_cycle) != cycle_id:
+                if int(raw_cycle) != cycle_pk:
                     return _bad_request(
                         "El campo «cycle» del cuerpo debe coincidir con el ciclo de la URL."
                     )
             except (TypeError, ValueError):
                 return _bad_request("El campo «cycle» debe ser un entero válido.")
-        body["cycle"] = cycle_id
+        body["cycle"] = cycle_pk
 
         serializer = HealthStatSerializer(
             data=body,
@@ -417,12 +436,13 @@ class CycleHealthStatDetailView(APIView):
         return [AdminOr(CanManageReviews)()]
 
     @extend_schema(responses={200: HealthStatSerializer})
-    def get(self, request, farm_id, cycle_id, health_stat_id):
-        if not _get_farm(farm_id):
-            return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
-            return _cycle_not_found_response()
-        health_stat = _get_health_stat_in_cycle(farm_id, cycle_id, health_stat_id)
+    def get(self, request, farm_pk, pond_pk, cycle_pk, health_stat_id):
+        _, _, err = _validate_pond_cycle_scope(farm_pk, pond_pk, cycle_pk)
+        if err:
+            return err
+        health_stat = _get_health_stat_in_scope(
+            farm_pk, pond_pk, cycle_pk, health_stat_id
+        )
         if not health_stat:
             return _health_stat_not_found_response()
         return Response(HealthStatSerializer(health_stat).data)
@@ -431,12 +451,13 @@ class CycleHealthStatDetailView(APIView):
         request=HealthStatUpdateSerializer,
         responses={200: HealthStatSerializer},
     )
-    def patch(self, request, farm_id, cycle_id, health_stat_id):
-        if not _get_farm(farm_id):
-            return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
-            return _cycle_not_found_response()
-        health_stat = _get_health_stat_in_cycle(farm_id, cycle_id, health_stat_id)
+    def patch(self, request, farm_pk, pond_pk, cycle_pk, health_stat_id):
+        _, _, err = _validate_pond_cycle_scope(farm_pk, pond_pk, cycle_pk)
+        if err:
+            return err
+        health_stat = _get_health_stat_in_scope(
+            farm_pk, pond_pk, cycle_pk, health_stat_id
+        )
         if not health_stat:
             return _health_stat_not_found_response()
 
@@ -465,12 +486,13 @@ class CycleHealthStatDetailView(APIView):
         ],
         responses={204: None},
     )
-    def delete(self, request, farm_id, cycle_id, health_stat_id):
-        if not _get_farm(farm_id):
-            return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
-            return _cycle_not_found_response()
-        health_stat = _get_health_stat_in_cycle(farm_id, cycle_id, health_stat_id)
+    def delete(self, request, farm_pk, pond_pk, cycle_pk, health_stat_id):
+        _, _, err = _validate_pond_cycle_scope(farm_pk, pond_pk, cycle_pk)
+        if err:
+            return err
+        health_stat = _get_health_stat_in_scope(
+            farm_pk, pond_pk, cycle_pk, health_stat_id
+        )
         if not health_stat:
             return _health_stat_not_found_response()
 
@@ -512,16 +534,15 @@ class HealthStatTreatmentPlanListCreateView(APIView):
         ],
         responses={200: TreatmentPlanSerializer(many=True)},
     )
-    def get(self, request, farm_id, cycle_id, health_stat_id):
-        if not _get_farm(farm_id):
-            return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
-            return _cycle_not_found_response()
-        if not _get_health_stat_in_cycle(farm_id, cycle_id, health_stat_id):
+    def get(self, request, farm_pk, pond_pk, cycle_pk, health_stat_id):
+        _, _, err = _validate_pond_cycle_scope(farm_pk, pond_pk, cycle_pk)
+        if err:
+            return err
+        if not _get_health_stat_in_scope(farm_pk, pond_pk, cycle_pk, health_stat_id):
             return _health_stat_not_found_response()
 
         qs = TreatmentPlan.objects.filter(
-            farm_id=farm_id,
+            farm_id=farm_pk,
             health_stat_id=health_stat_id,
         ).select_related("health_stat", "product", "unit", "farm")
         qs, err = _apply_treatment_plan_filters(qs, request.query_params)
@@ -535,13 +556,11 @@ class HealthStatTreatmentPlanListCreateView(APIView):
         request=TreatmentPlanSerializer,
         responses={201: TreatmentPlanSerializer},
     )
-    def post(self, request, farm_id, cycle_id, health_stat_id):
-        farm = _get_farm(farm_id)
-        if not farm:
-            return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
-            return _cycle_not_found_response()
-        if not _get_health_stat_in_cycle(farm_id, cycle_id, health_stat_id):
+    def post(self, request, farm_pk, pond_pk, cycle_pk, health_stat_id):
+        farm, _, err = _validate_pond_cycle_scope(farm_pk, pond_pk, cycle_pk)
+        if err:
+            return err
+        if not _get_health_stat_in_scope(farm_pk, pond_pk, cycle_pk, health_stat_id):
             return _health_stat_not_found_response()
 
         body = (
@@ -583,14 +602,13 @@ class HealthStatTreatmentPlanDetailView(APIView):
         return [AdminOr(CanManageReviews)()]
 
     @extend_schema(responses={200: TreatmentPlanSerializer})
-    def get(self, request, farm_id, cycle_id, health_stat_id, plan_id):
-        if not _get_farm(farm_id):
-            return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
-            return _cycle_not_found_response()
-        if not _get_health_stat_in_cycle(farm_id, cycle_id, health_stat_id):
+    def get(self, request, farm_pk, pond_pk, cycle_pk, health_stat_id, plan_id):
+        _, _, err = _validate_pond_cycle_scope(farm_pk, pond_pk, cycle_pk)
+        if err:
+            return err
+        if not _get_health_stat_in_scope(farm_pk, pond_pk, cycle_pk, health_stat_id):
             return _health_stat_not_found_response()
-        plan = _get_treatment_plan_for_farm(farm_id, health_stat_id, plan_id)
+        plan = _get_treatment_plan_for_farm(farm_pk, health_stat_id, plan_id)
         if not plan:
             return _treatment_plan_not_found_response()
         sync_treatment_plan_status(plan)
@@ -600,15 +618,14 @@ class HealthStatTreatmentPlanDetailView(APIView):
         request=TreatmentPlanSerializer,
         responses={200: TreatmentPlanSerializer, 201: TreatmentPlanSerializer},
     )
-    def patch(self, request, farm_id, cycle_id, health_stat_id, plan_id):
-        if not _get_farm(farm_id):
-            return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
-            return _cycle_not_found_response()
-        if not _get_health_stat_in_cycle(farm_id, cycle_id, health_stat_id):
+    def patch(self, request, farm_pk, pond_pk, cycle_pk, health_stat_id, plan_id):
+        _, _, err = _validate_pond_cycle_scope(farm_pk, pond_pk, cycle_pk)
+        if err:
+            return err
+        if not _get_health_stat_in_scope(farm_pk, pond_pk, cycle_pk, health_stat_id):
             return _health_stat_not_found_response()
         plan = _get_treatment_plan_for_farm(
-            farm_id,
+            farm_pk,
             health_stat_id,
             plan_id,
             exclude_cancelled=True,
@@ -639,7 +656,7 @@ class HealthStatTreatmentPlanDetailView(APIView):
             partial=True,
             context={
                 "replace_plan": plan,
-                "farm_id": farm_id,
+                "farm_id": farm_pk,
                 "fixed_health_stat_id": health_stat_id,
             },
         )
@@ -649,7 +666,7 @@ class HealthStatTreatmentPlanDetailView(APIView):
         try:
             if plan.status == TreatmentPlan.Status.IN_PROGRESS:
                 new_plan = update_in_progress_treatment_plan(
-                    farm_id=farm_id,
+                    farm_id=farm_pk,
                     old_plan=plan,
                     health_stat=vd["health_stat"],
                     created_by=request.user,
@@ -670,7 +687,7 @@ class HealthStatTreatmentPlanDetailView(APIView):
                     status=status.HTTP_201_CREATED,
                 )
             updated_plan = update_scheduled_treatment_plan(
-                farm_id=farm_id,
+                farm_id=farm_pk,
                 plan=plan,
                 health_stat=vd["health_stat"],
                 product=vd.get("product"),
@@ -693,15 +710,14 @@ class HealthStatTreatmentPlanDetailView(APIView):
             )
 
     @extend_schema(responses={204: None})
-    def delete(self, request, farm_id, cycle_id, health_stat_id, plan_id):
-        if not _get_farm(farm_id):
-            return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
-            return _cycle_not_found_response()
-        if not _get_health_stat_in_cycle(farm_id, cycle_id, health_stat_id):
+    def delete(self, request, farm_pk, pond_pk, cycle_pk, health_stat_id, plan_id):
+        _, _, err = _validate_pond_cycle_scope(farm_pk, pond_pk, cycle_pk)
+        if err:
+            return err
+        if not _get_health_stat_in_scope(farm_pk, pond_pk, cycle_pk, health_stat_id):
             return _health_stat_not_found_response()
         plan = _get_treatment_plan_for_farm(
-            farm_id,
+            farm_pk,
             health_stat_id,
             plan_id,
             exclude_cancelled=True,
@@ -726,17 +742,16 @@ class TreatmentPlanOccupiedRangesView(APIView):
         return [AdminOr(IsFarmMember)()]
 
     @extend_schema(responses={200: OpenApiTypes.OBJECT})
-    def get(self, request, farm_id, cycle_id, health_stat_id):
-        if not _get_farm(farm_id):
-            return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
-            return _cycle_not_found_response()
-        if not _get_health_stat_in_cycle(farm_id, cycle_id, health_stat_id):
+    def get(self, request, farm_pk, pond_pk, cycle_pk, health_stat_id):
+        _, _, err = _validate_pond_cycle_scope(farm_pk, pond_pk, cycle_pk)
+        if err:
+            return err
+        if not _get_health_stat_in_scope(farm_pk, pond_pk, cycle_pk, health_stat_id):
             return _health_stat_not_found_response()
 
         qs = (
             TreatmentPlan.objects.filter(
-                farm_id=farm_id,
+                farm_id=farm_pk,
                 health_stat_id=health_stat_id,
             )
             .exclude(status=TreatmentPlan.Status.CANCELLED)
@@ -763,7 +778,6 @@ class CycleTreatmentEventListView(APIView):
 
     @extend_schema(
         parameters=[
-            OpenApiParameter("pond", OpenApiTypes.INT, OpenApiParameter.QUERY),
             OpenApiParameter("health_stat", OpenApiTypes.INT, OpenApiParameter.QUERY),
             OpenApiParameter("plan", OpenApiTypes.INT, OpenApiParameter.QUERY),
             OpenApiParameter("status", OpenApiTypes.STR, OpenApiParameter.QUERY),
@@ -772,15 +786,15 @@ class CycleTreatmentEventListView(APIView):
         ],
         responses={200: TreatmentEventSerializer(many=True)},
     )
-    def get(self, request, farm_id, cycle_id):
-        if not _get_farm(farm_id):
-            return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
-            return _cycle_not_found_response()
+    def get(self, request, farm_pk, pond_pk, cycle_pk):
+        _, _, err = _validate_pond_cycle_scope(farm_pk, pond_pk, cycle_pk)
+        if err:
+            return err
 
         qs = TreatmentEvent.objects.filter(
-            farm_id=farm_id,
-            cycle_id=cycle_id,
+            farm_id=farm_pk,
+            cycle_id=cycle_pk,
+            treatment_plan__health_stat__pond_id=pond_pk,
         ).select_related(
             "cycle",
             "treatment_plan",
@@ -791,12 +805,6 @@ class CycleTreatmentEventListView(APIView):
             "actual_unit",
             "completed_by",
         ).exclude(treatment_plan__status=TreatmentPlan.Status.CANCELLED)
-
-        pond_id, err = _parse_optional_id(request.query_params, "pond")
-        if err:
-            return err
-        if pond_id is not None:
-            qs = qs.filter(treatment_plan__health_stat__pond_id=pond_id)
 
         health_stat_id, err = _parse_optional_id(request.query_params, "health_stat")
         if err:
@@ -830,14 +838,13 @@ class HealthStatTreatmentPlanEventListView(APIView):
         ],
         responses={200: TreatmentEventSerializer(many=True)},
     )
-    def get(self, request, farm_id, cycle_id, health_stat_id, plan_id):
-        if not _get_farm(farm_id):
-            return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
-            return _cycle_not_found_response()
-        if not _get_health_stat_in_cycle(farm_id, cycle_id, health_stat_id):
+    def get(self, request, farm_pk, pond_pk, cycle_pk, health_stat_id, plan_id):
+        _, _, err = _validate_pond_cycle_scope(farm_pk, pond_pk, cycle_pk)
+        if err:
+            return err
+        if not _get_health_stat_in_scope(farm_pk, pond_pk, cycle_pk, health_stat_id):
             return _health_stat_not_found_response()
-        plan = _get_treatment_plan_for_farm(farm_id, health_stat_id, plan_id)
+        plan = _get_treatment_plan_for_farm(farm_pk, health_stat_id, plan_id)
         if not plan:
             return _treatment_plan_not_found_response()
         if plan.status == TreatmentPlan.Status.CANCELLED:
@@ -845,7 +852,7 @@ class HealthStatTreatmentPlanEventListView(APIView):
 
         sync_treatment_plan_status(plan)
         qs = TreatmentEvent.objects.filter(
-            farm_id=farm_id,
+            farm_id=farm_pk,
             treatment_plan_id=plan_id,
         ).select_related(
             "cycle",
@@ -868,7 +875,7 @@ class HealthStatTreatmentPlanEventDetailView(APIView):
             return [AdminOr(IsFarmMember)()]
         return [AdminOr(CanManageReviews)()]
 
-    def _get_event(self, farm_id, cycle_id, health_stat_id, plan_id, event_id):
+    def _get_event(self, farm_pk, pond_pk, cycle_pk, health_stat_id, plan_id, event_id):
         try:
             return TreatmentEvent.objects.select_related(
                 "cycle",
@@ -880,21 +887,23 @@ class HealthStatTreatmentPlanEventDetailView(APIView):
                 "completed_by",
             ).get(
                 pk=event_id,
-                farm_id=farm_id,
-                cycle_id=cycle_id,
+                farm_id=farm_pk,
+                cycle_id=cycle_pk,
                 treatment_plan_id=plan_id,
                 treatment_plan__health_stat_id=health_stat_id,
+                treatment_plan__health_stat__pond_id=pond_pk,
             )
         except TreatmentEvent.DoesNotExist:
             return None
 
     @extend_schema(responses={200: TreatmentEventSerializer})
-    def get(self, request, farm_id, cycle_id, health_stat_id, plan_id, event_id):
-        if not _get_farm(farm_id):
-            return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
-            return _cycle_not_found_response()
-        event = self._get_event(farm_id, cycle_id, health_stat_id, plan_id, event_id)
+    def get(self, request, farm_pk, pond_pk, cycle_pk, health_stat_id, plan_id, event_id):
+        _, _, err = _validate_pond_cycle_scope(farm_pk, pond_pk, cycle_pk)
+        if err:
+            return err
+        event = self._get_event(
+            farm_pk, pond_pk, cycle_pk, health_stat_id, plan_id, event_id
+        )
         if not event:
             return _treatment_event_not_found_response()
         if event.treatment_plan.status == TreatmentPlan.Status.CANCELLED:
@@ -905,12 +914,13 @@ class HealthStatTreatmentPlanEventDetailView(APIView):
         request=TreatmentEventSerializer,
         responses={200: TreatmentEventSerializer},
     )
-    def patch(self, request, farm_id, cycle_id, health_stat_id, plan_id, event_id):
-        if not _get_farm(farm_id):
-            return _farm_not_found_response()
-        if not _get_cycle_in_farm(farm_id, cycle_id):
-            return _cycle_not_found_response()
-        event = self._get_event(farm_id, cycle_id, health_stat_id, plan_id, event_id)
+    def patch(self, request, farm_pk, pond_pk, cycle_pk, health_stat_id, plan_id, event_id):
+        _, _, err = _validate_pond_cycle_scope(farm_pk, pond_pk, cycle_pk)
+        if err:
+            return err
+        event = self._get_event(
+            farm_pk, pond_pk, cycle_pk, health_stat_id, plan_id, event_id
+        )
         if not event:
             return _treatment_event_not_found_response()
         if event.treatment_plan.status == TreatmentPlan.Status.CANCELLED:
