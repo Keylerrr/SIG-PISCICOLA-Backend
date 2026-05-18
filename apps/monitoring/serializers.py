@@ -471,11 +471,16 @@ class ControlStatSerializer(serializers.ModelSerializer):
             biomass_gain = BiomassCalculator.calculate_biomass_gain(
                 current_biomass, last_control.biomass_kg
             )
-            feed_consumed = BiomassCalculator.get_feed_consumed_since_last_control(
-                cycle.id, pond.id, control_date
+            # Usar feeding.utils para calcular alimento consumido en el lapso de tiempo
+            from apps.feeding.utils import cycle_feed_consumed_kg
+            
+            alimento_kg = cycle_feed_consumed_kg(
+                cycle_id=cycle.id,
+                start_date=last_control.control_date,
+                end_date=control_date,
             )
             if biomass_gain:
-                fca = BiomassCalculator.calculate_fca(feed_consumed, biomass_gain)
+                fca = BiomassCalculator.calculate_fca(float(alimento_kg), biomass_gain)
 
         # Crear el ControlStat con los datos calculados
         control_stat = ControlStat.objects.create(
