@@ -62,49 +62,7 @@ class BiomassCalculator:
         """
         return current_biomass_kg - previous_biomass_kg
 
-    @staticmethod
-    def get_feed_consumed_since_last_control(
-        cycle_id: int, pond_id: int, control_date
-    ) -> float:
-        """
-        Obtiene el alimento consumido desde el último control hasta la fecha actual.
-        Busca todos los InventoryMovement type='Out' del ciclo después del último
-        ControlStat anterior a control_date, sumando quantities.
 
-        Args:
-            cycle_id: ID del ciclo
-            pond_id: ID del estanque
-            control_date: Fecha del control
-
-        Returns:
-            Cantidad total de alimento consumido desde el último control
-        """
-        from .models import ControlStat
-
-        # Buscar el último ControlStat anterior a esta fecha
-        last_control = (
-            ControlStat.objects.filter(
-                cycle_id=cycle_id, pond_id=pond_id, control_date__lt=control_date, deleted_at__isnull=True
-            )
-            .order_by("-control_date")
-            .first()
-        )
-
-        start_date = last_control.control_date if last_control else None
-
-        # Buscar todos los InventoryMovement de alimento después de esta fecha
-        query = InventoryMovement.objects.filter(
-            cycle_id=cycle_id,
-            pond_id=pond_id,
-            movement_type="Out",
-            source_type="DAILY",
-        )
-
-        if start_date:
-            query = query.filter(created_at__date__gt=start_date)
-
-        total = query.aggregate(total=Sum("quantity"))
-        return float(total["total"] or 0)
 
     @staticmethod
     def get_active_pond_weights(pond_id: int) -> Dict:
