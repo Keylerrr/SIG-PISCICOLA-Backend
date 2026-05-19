@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from datetime import date
-from django.db.models import Sum
+from django.db.models import Sum, Avg, Min, Max
+from django.db import transaction
 
 from .models import FishEvaluated, DailyStat, ProductUsageLog, ControlStat
 from .services import BiomassCalculator, FishEvaluatedCalculator
@@ -39,7 +40,7 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["created_at", "updated_at", "min_weight_g", "avg_weight_g", "max_weight_g"]
+        read_only_fields = ["cycle", "pond", "created_at", "updated_at"]
 
     def validate(self, data):
         cycle = data.get("cycle") or (self.instance.cycle if self.instance else None)
@@ -115,26 +116,24 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         """
-        Crea una evaluación de peces calculando automáticamente los pesos
-        desde los lotes activos del estanque.
+        Crea FishEvaluated y genera/actualiza ControlStat automáticamente.
         
-        - SIN batch_id: Descuenta mortalidad proporcionalmente de TODOS los batches del ciclo
-        - CON batch_id: Descuenta mortalidad SOLO de ese batch. Si es 100%, cambia a DEAD
+        Flujo:
+        1. Crear FishEvaluated
+        2. Descontar mortalidad (como antes)
+        3. Generar ControlStat automáticamente:
+           - Buscar todos los FishEvaluated del mismo día/ciclo/pond
+           - Agregar: sampled_quantity, mortality, pesos
+           - Crear o actualizar el ControlStat del día
         """
         batch_id = validated_data.pop("batch_id", None)
         pond = validated_data.get("pond")
         cycle = validated_data.get("cycle")
+        evaluation_date = validated_data.get("evaluation_date")
         mortality_quantity = validated_data.get("mortality_quantity", 0)
         sampled_quantity = validated_data.get("sampled_quantity", 0)
         
-        # Calcular pesos desde los lotes activos del estanque
-        weights = BiomassCalculator.get_active_pond_weights(pond.id)
-        
-        validated_data["min_weight_g"] = weights["min_weight_g"]
-        validated_data["avg_weight_g"] = weights["avg_weight_g"]
-        validated_data["max_weight_g"] = weights["max_weight_g"]
-        
-        # Crear la evaluación
+        # Crear la evaluación con los pesos que el usuario envió
         fish_evaluated = super().create(validated_data)
         
         # Descontar mortalidad
@@ -187,12 +186,65 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
             cycle.state = Cycle.State.CANCELLED
             cycle.save(update_fields=["state"])
         
+        # ========== GENERAR CONTROL STAT AUTOMÁTICAMENTE ==========
+        # Buscar todos los FishEvaluated del mismo día/ciclo/pond (incluyendo el recién creado)
+        fish_evals_today = FishEvaluated.objects.filter(
+            cycle=cycle,
+            pond=pond,
+            evaluation_date=evaluation_date,
+            deleted_at__isnull=True
+        )
+        
+        # Agregar datos de todas las evaluaciones del día
+        agg_data = fish_evals_today.aggregate(
+            total_sampled=Sum("sampled_quantity"),
+            total_mortality=Sum("mortality_quantity"),
+            min_weight=Min("min_weight_g"),
+            avg_weight=Avg("avg_weight_g"),
+            max_weight=Max("max_weight_g"),
+        )
+        
+        total_sampled = agg_data["total_sampled"] or 0
+        total_mortality = agg_data["total_mortality"] or 0
+        live_quantity = total_sampled - total_mortality
+        live_quantity = max(0, live_quantity)
+        
+        min_weight = agg_data["min_weight"] or 0.0
+        avg_weight = agg_data["avg_weight"] or 0.0
+        max_weight = agg_data["max_weight"] or 0.0
+        
+        # Calcular biomasa y otros estadísticos
+        from .services import BiomassCalculator
+        biomass_kg = BiomassCalculator.calculate_biomass(live_quantity, avg_weight)
+        mortality_percentage = (total_mortality / total_sampled * 100) if total_sampled > 0 else 0.0
+        
+        # Crear o actualizar ControlStat del día
+        # Los FishEvaluated hechos por múltiples usuarios en el mismo día
+        # actualizan el mismo ControlStat
+        control_stat, created = ControlStat.objects.update_or_create(
+            cycle=cycle,
+            pond=pond,
+            control_date=evaluation_date,  # La fecha de control es la del FishEvaluated
+            defaults={
+                "farm": cycle.farm,
+                "sampled_quantity": total_sampled,
+                "live_quantity": live_quantity,
+                "min_weight_g": min_weight,
+                "avg_weight_g": avg_weight,
+                "max_weight_g": max_weight,
+                "mortality_percentage": mortality_percentage,
+                "biomass_kg": biomass_kg,
+            }
+        )
+        
         return fish_evaluated
 
 
 class ProductUsageLogSerializer(serializers.ModelSerializer):
     """
     Serializer para registros de uso de productos.
+    ProductUsageLog SOLO se crea EN CONJUNTO con DailyStat (como campo anidado).
+    No se puede crear de forma independiente.
     """
 
     class Meta:
@@ -214,6 +266,13 @@ class ProductUsageLogSerializer(serializers.ModelSerializer):
         product = data.get("product")
         batch = data.get("batch")
         quantity_used = data.get("quantity_used")
+
+        # ProductUsageLog SIEMPRE debe estar ligado a un DailyStat
+        # Se valida aquí para evitar creaciones independientes
+        if not daily_stat:
+            raise serializers.ValidationError({
+                "daily_stat": "ProductUsageLog NO se crea independientemente. Crea product_usages EN CONJUNTO al crear DailyStat en la misma solicitud POST."
+            })
 
         # Validar cantidad > 0
         if quantity_used is not None and quantity_used <= 0:
@@ -265,7 +324,7 @@ class DailyStatSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["created_at", "updated_at"]
+        read_only_fields = ["cycle", "pond", "created_at", "updated_at"]
 
     def validate(self, data):
         cycle = data.get("cycle") or (self.instance.cycle if self.instance else None)
@@ -307,19 +366,34 @@ class DailyStatSerializer(serializers.ModelSerializer):
 
         return data
 
+    @transaction.atomic
     def create(self, validated_data):
+        """
+        Crea DailyStat con ProductUsageLogs anidados de forma ATÓMICA.
+        
+        Flujo:
+        1. Crea el DailyStat
+        2. Para cada product_usage:
+           - Crea ProductUsageLog
+           - Llama create_out_movement() para descontar del inventario
+        3. Si algún paso falla, revierte TODO (incluyendo el DailyStat)
+        
+        El descuento de inventario se registra en InventoryMovement con tipo OUT.
+        """
         product_usages_data = validated_data.pop("product_usages", [])
 
         # Crear el DailyStat
         daily_stat = DailyStat.objects.create(**validated_data)
 
-        # Crear ProductUsageLogs y sus InventoryMovements
-        for usage_data in product_usages_data:
-            usage_data["daily_stat"] = daily_stat
-            product_usage = ProductUsageLog.objects.create(**usage_data)
+        try:
+            # Crear ProductUsageLogs y sus InventoryMovements
+            for usage_data in product_usages_data:
+                usage_data["daily_stat"] = daily_stat
+                product_usage = ProductUsageLog.objects.create(**usage_data)
 
-            # Crear InventoryMovement
-            try:
+                # Crear InventoryMovement OUT (descontar del inventario)
+                # Si hay error de stock, create_out_movement() lanza ValueError
+                # y la transacción se revierte completamente
                 create_out_movement(
                     farm=daily_stat.cycle.farm,
                     product=product_usage.product,
@@ -330,19 +404,24 @@ class DailyStatSerializer(serializers.ModelSerializer):
                     pond=daily_stat.pond,
                     cycle=daily_stat.cycle,
                 )
-            except ValueError as e:
-                # Si hay error de stock, eliminar el ProductUsageLog y relanzar
-                product_usage.delete()
-                raise serializers.ValidationError({
-                    "product_usages": str(e)
-                })
+        except ValueError as e:
+            # ValueError se lanza si no hay stock suficiente
+            # La transacción @transaction.atomic revierte automáticamente
+            raise serializers.ValidationError({
+                "product_usages": str(e)
+            })
 
         return daily_stat
 
 
 class ControlStatSerializer(serializers.ModelSerializer):
     """
-    Serializer para estadísticas de control con cálculo automático de campos derivados.
+    Serializer para estadísticas de control (READ-ONLY).
+    
+    ControlStat se genera AUTOMÁTICAMENTE cada vez que se crea un FishEvaluated.
+    El frontend NO crea ControlStat manualmente.
+    
+    control_date es read-only y se asigna como evaluation_date del FishEvaluated.
     """
 
     class Meta:
@@ -365,6 +444,9 @@ class ControlStatSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = [
+            "cycle",
+            "pond",
+            "control_date",
             "sampled_quantity",
             "live_quantity",
             "min_weight_g",
