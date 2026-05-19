@@ -66,6 +66,13 @@ class BiomassCalculator:
         return current_biomass_kg - previous_biomass_kg
 
     @staticmethod
+    def get_sample_live_quantity(
+        sampled_quantity: int, mortality_quantity: int = 0
+    ) -> int:
+        """Peces vivos en la muestra: evaluados menos mortalidad del muestreo."""
+        return max(0, sampled_quantity - mortality_quantity)
+
+    @staticmethod
     def get_pond_live_quantity(pond_id: int) -> int:
         """
         Cantidad de peces vivos en el estanque (stock operativo de lotes activos).
