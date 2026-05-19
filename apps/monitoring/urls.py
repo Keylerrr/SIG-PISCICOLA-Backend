@@ -61,13 +61,12 @@ urlpatterns = [
         ),
         name="daily-stat-detail",
     ),
-    # Control Stats
+    # Control Stats (READ-ONLY - generados automáticamente desde FishEvaluated)
     path(
         "farms/<int:farm_pk>/control-stats/",
         ControlStatViewSet.as_view(
             {
                 "get": "list",
-                "post": "create",
             }
         ),
         name="control-stat-list",
@@ -77,7 +76,6 @@ urlpatterns = [
         ControlStatViewSet.as_view(
             {
                 "get": "list",
-                "post": "create",
             }
         ),
         name="control-stat-cycle-list",
@@ -87,8 +85,6 @@ urlpatterns = [
         ControlStatViewSet.as_view(
             {
                 "get": "retrieve",
-                "patch": "partial_update",
-                "delete": "destroy",
             }
         ),
         name="control-stat-detail",
