@@ -47,20 +47,23 @@ class BiomassCalculator:
 
     @staticmethod
     def calculate_biomass_gain(
-        current_biomass_kg: float, previous_biomass_kg: float
+        live_quantity: int, current_avg_weight_g: float, previous_avg_weight_g: float
     ) -> float:
         """
-        Calcula la ganancia de biomasa.
-        ganancia = biomasa actual - biomasa anterior
+        Calcula la ganancia de biomasa basada en el crecimiento individual.
+        ganancia = cantidad_vivos * (peso_actual - peso_anterior) / 1000
 
         Args:
-            current_biomass_kg: Biomasa actual en kilogramos
-            previous_biomass_kg: Biomasa anterior en kilogramos
+            live_quantity: Cantidad de peces vivos
+            current_avg_weight_g: Peso promedio actual en gramos
+            previous_avg_weight_g: Peso promedio anterior en gramos
 
         Returns:
             Ganancia de biomasa en kilogramos
         """
-        return current_biomass_kg - previous_biomass_kg
+        if current_avg_weight_g <= previous_avg_weight_g or live_quantity <= 0:
+            return 0.0
+        return (live_quantity * (current_avg_weight_g - previous_avg_weight_g)) / 1000.0
 
 
 
