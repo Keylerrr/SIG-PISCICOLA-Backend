@@ -264,38 +264,27 @@ class CycleStateCalculator:
 
         # Obtener la evaluación más reciente
         latest_evaluation = evaluations.first()
-        latest_date = latest_evaluation.evaluation_date
 
-        # Obtener solo las evaluaciones de la última fecha
-        latest_evaluations = evaluations.filter(evaluation_date=latest_date)
-
-        # Agregaciones de las últimas evaluaciones
-        latest_aggregation = latest_evaluations.aggregate(
+        # Agregaciones de todas las evaluaciones
+        aggregation = evaluations.aggregate(
             total_sampled=Sum("sampled_quantity"),
-            latest_mortality=Sum("mortality_quantity"),
+            total_mortality=Sum("mortality_quantity"),
             min_weight=Min("min_weight_g"),
             max_weight=Max("max_weight_g"),
             avg_weight_avg=Avg("avg_weight_g"),
         )
-        
-        # Para la mortalidad total del ciclo, sumamos de todas las evaluaciones
-        total_mortality_agg = evaluations.aggregate(total_mortality=Sum("mortality_quantity"))
-        total_mortality = total_mortality_agg["total_mortality"] or 0
 
-        sampled_quantity = latest_aggregation["total_sampled"] or 0
-        latest_mortality = latest_aggregation["latest_mortality"] or 0
-        live_quantity = sampled_quantity - latest_mortality
+        sampled_quantity = aggregation["total_sampled"] or 0
+        total_mortality = aggregation["total_mortality"] or 0
+        live_quantity = sampled_quantity - total_mortality
 
-        # El porcentaje de mortalidad del ciclo puede ser sobre la cantidad total actual
-        # o sobre la cantidad inicial. Calculamos sobre la muestra más reciente para mantener consistencia,
-        # o sobre la mortalidad del último registro
         mortality_percentage = (
-            (latest_mortality / sampled_quantity * 100)
+            (total_mortality / sampled_quantity * 100)
             if sampled_quantity > 0
             else 0.0
         )
 
-        avg_weight_g = latest_aggregation["avg_weight_avg"] or 0.0
+        avg_weight_g = aggregation["avg_weight_avg"] or 0.0
         biomass_kg = BiomassCalculator.calculate_biomass(live_quantity, avg_weight_g)
 
         # Calcular FCA si hay datos suficientes (2+ ControlStats)
@@ -319,8 +308,8 @@ class CycleStateCalculator:
             "fish_quantity": live_quantity,
             "total_mortality": total_mortality,
             "avg_weight_g": avg_weight_g,
-            "min_weight_g": latest_aggregation["min_weight"] or 0.0,
-            "max_weight_g": latest_aggregation["max_weight"] or 0.0,
+            "min_weight_g": aggregation["min_weight"] or 0.0,
+            "max_weight_g": aggregation["max_weight"] or 0.0,
             "mortality_percentage": mortality_percentage,
             "biomass_kg": biomass_kg,
             "fca": fca,
