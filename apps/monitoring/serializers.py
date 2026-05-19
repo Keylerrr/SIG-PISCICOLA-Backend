@@ -532,11 +532,11 @@ class ControlStatSerializer(serializers.ModelSerializer):
         pond = validated_data["pond"]
         control_date = validated_data["control_date"]
 
-        # Obtener todas las evaluaciones hasta la fecha de control
+        # Obtener todas las evaluaciones de la fecha de control
         evaluations = FishEvaluated.objects.filter(
             cycle=cycle,
             pond=pond,
-            evaluation_date__lte=control_date,
+            evaluation_date=control_date,
             deleted_at__isnull=True,
         )
 
