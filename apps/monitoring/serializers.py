@@ -15,10 +15,12 @@ from apps.purchases.models import InventoryMovement
 class FishEvaluatedSerializer(serializers.ModelSerializer):
     """
     Serializer para evaluaciones de peces con validaciones completas.
-    Los pesos (min, avg, max) se calculan automáticamente desde los lotes activos del estanque.
     
-    - SIN batch_id: Mortalidad general, se descuenta proporcionalmente de todos los batches
-    - CON batch_id: Mortalidad específica de un batch. Si es 100%, obligatoriamente cambia a DEAD
+    Usuario envía:
+    - min_weight_g, max_weight_g: Pesos medidos en el muestreo
+    
+    Backend calcula automáticamente:
+    - avg_weight_g = (min_weight_g + max_weight_g) / 2
     """
     batch_id = serializers.IntegerField(write_only=True, required=False)
 
@@ -39,7 +41,7 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["created_at", "updated_at", "min_weight_g", "avg_weight_g", "max_weight_g"]
+        read_only_fields = ["cycle", "pond", "avg_weight_g", "created_at", "updated_at"]
 
     def validate(self, data):
         cycle = data.get("cycle") or (self.instance.cycle if self.instance else None)
@@ -115,24 +117,21 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         """
-        Crea una evaluación de peces calculando automáticamente los pesos
-        desde los lotes activos del estanque.
+        Crea FishEvaluated calculando avg_weight_g automáticamente.
         
-        - SIN batch_id: Descuenta mortalidad proporcionalmente de TODOS los batches del ciclo
-        - CON batch_id: Descuenta mortalidad SOLO de ese batch. Si es 100%, cambia a DEAD
+        avg_weight_g = (min_weight_g + max_weight_g) / 2
         """
         batch_id = validated_data.pop("batch_id", None)
+        
+        # Calcular avg_weight_g automáticamente
+        min_weight = validated_data.get("min_weight_g", 0)
+        max_weight = validated_data.get("max_weight_g", 0)
+        validated_data["avg_weight_g"] = (min_weight + max_weight) / 2
+        
         pond = validated_data.get("pond")
         cycle = validated_data.get("cycle")
         mortality_quantity = validated_data.get("mortality_quantity", 0)
         sampled_quantity = validated_data.get("sampled_quantity", 0)
-        
-        # Calcular pesos desde los lotes activos del estanque
-        weights = BiomassCalculator.get_active_pond_weights(pond.id)
-        
-        validated_data["min_weight_g"] = weights["min_weight_g"]
-        validated_data["avg_weight_g"] = weights["avg_weight_g"]
-        validated_data["max_weight_g"] = weights["max_weight_g"]
         
         # Crear la evaluación
         fish_evaluated = super().create(validated_data)
