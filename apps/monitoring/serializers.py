@@ -200,52 +200,29 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
             cycle.save(update_fields=["state"])
         
         # ========== GENERAR CONTROL STAT AUTOMÁTICAMENTE ==========
-        # Buscar todos los FishEvaluated del mismo día/ciclo/pond (incluyendo el recién creado)
+        # En lugar de agregar todos los del día, usamos únicamente el registro actual
+        # para evitar acumular "sampled_quantity" y duplicar la biomasa.
         evaluation_date = validated_data.get("evaluation_date")
-        fish_evals_today = FishEvaluated.objects.filter(
-            cycle=cycle,
-            pond=pond,
-            evaluation_date=evaluation_date,
-            deleted_at__isnull=True
-        )
         
-        # Agregar datos de todas las evaluaciones del día
-        agg_data = fish_evals_today.aggregate(
-            total_sampled=Sum("sampled_quantity"),
-            total_mortality=Sum("mortality_quantity"),
-            min_weight=Min("min_weight_g"),
-            avg_weight=Avg("avg_weight_g"),
-            max_weight=Max("max_weight_g"),
-        )
-        
-        total_sampled = agg_data["total_sampled"] or 0
-        total_mortality = agg_data["total_mortality"] or 0
-        live_quantity = total_sampled - total_mortality
+        live_quantity = fish_evaluated.sampled_quantity - fish_evaluated.mortality_quantity
         live_quantity = max(0, live_quantity)
         
-        min_weight = agg_data["min_weight"] or 0.0
-        avg_weight = agg_data["avg_weight"] or 0.0
-        max_weight = agg_data["max_weight"] or 0.0
-        
-        # Calcular biomasa y otros estadísticos
         from .services import BiomassCalculator
-        biomass_kg = BiomassCalculator.calculate_biomass(live_quantity, avg_weight)
-        mortality_percentage = (total_mortality / total_sampled * 100) if total_sampled > 0 else 0.0
+        biomass_kg = BiomassCalculator.calculate_biomass(live_quantity, fish_evaluated.avg_weight_g)
+        mortality_percentage = (fish_evaluated.mortality_quantity / fish_evaluated.sampled_quantity * 100) if fish_evaluated.sampled_quantity > 0 else 0.0
         
-        # Crear o actualizar ControlStat del día
-        # Los FishEvaluated hechos por múltiples usuarios en el mismo día
-        # actualizan el mismo ControlStat
+        # Crear o actualizar ControlStat del día usando solo el registro actual
         control_stat, created = ControlStat.objects.update_or_create(
             cycle=cycle,
             pond=pond,
-            control_date=evaluation_date,  # La fecha de control es la del FishEvaluated
+            control_date=evaluation_date,
             defaults={
                 "farm": cycle.farm,
-                "sampled_quantity": total_sampled,
+                "sampled_quantity": fish_evaluated.sampled_quantity,
                 "live_quantity": live_quantity,
-                "min_weight_g": min_weight,
-                "avg_weight_g": avg_weight,
-                "max_weight_g": max_weight,
+                "min_weight_g": fish_evaluated.min_weight_g,
+                "avg_weight_g": fish_evaluated.avg_weight_g,
+                "max_weight_g": fish_evaluated.max_weight_g,
                 "mortality_percentage": mortality_percentage,
                 "biomass_kg": biomass_kg,
             }
