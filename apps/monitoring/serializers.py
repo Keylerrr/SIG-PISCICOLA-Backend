@@ -220,10 +220,8 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
         ).order_by("-control_date").first()
         
         start_date = last_control.control_date if last_control else cycle.start_date
-        previous_weight = last_control.avg_weight_g if last_control else 0.0
-        biomass_gain_kg = BiomassCalculator.calculate_biomass_gain(
-            live_quantity, fish_evaluated.avg_weight_g, previous_weight
-        )
+        previous_biomass = last_control.biomass_kg if last_control else 0.0
+        biomass_gain_kg = BiomassCalculator.calculate_biomass_gain(biomass_kg, previous_biomass)
         
         from apps.feeding.utils import cycle_feed_consumed_kg
         alimento_kg = cycle_feed_consumed_kg(
@@ -563,10 +561,8 @@ class ControlStatSerializer(serializers.ModelSerializer):
         )
 
         start_date = last_control.control_date if last_control else cycle.start_date
-        previous_weight = last_control.avg_weight_g if last_control else 0.0
-        biomass_gain = BiomassCalculator.calculate_biomass_gain(
-            stats["live_quantity"], current_biomass * 1000 / stats["live_quantity"] if stats["live_quantity"] > 0 else 0, previous_weight
-        )
+        previous_biomass = last_control.biomass_kg if last_control else 0.0
+        biomass_gain = BiomassCalculator.calculate_biomass_gain(current_biomass, previous_biomass)
         
         from apps.feeding.utils import cycle_feed_consumed_kg
         alimento_kg = cycle_feed_consumed_kg(
