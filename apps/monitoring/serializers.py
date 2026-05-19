@@ -232,40 +232,6 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
         biomass_kg = BiomassCalculator.calculate_biomass(live_quantity, avg_weight)
         mortality_percentage = (total_mortality / total_sampled * 100) if total_sampled > 0 else 0.0
         
-        # ===== Calcular biomass_gain_kg y FCA =====
-        biomass_gain_kg = None
-        fca = None
-        
-        # Buscar el ControlStat anterior
-        last_control = (
-            ControlStat.objects.filter(
-                cycle=cycle,
-                pond=pond,
-                control_date__lt=evaluation_date,
-                deleted_at__isnull=True,
-            )
-            .order_by("-control_date")
-            .first()
-        )
-        
-        if last_control:
-            # Calcular ganancia de biomasa
-            biomass_gain_kg = BiomassCalculator.calculate_biomass_gain(
-                biomass_kg, last_control.biomass_kg
-            )
-            
-            # Calcular alimento consumido entre el control anterior y ahora
-            from apps.feeding.utils import cycle_feed_consumed_kg
-            alimento_kg = cycle_feed_consumed_kg(
-                cycle_id=cycle.id,
-                start_date=last_control.control_date,
-                end_date=evaluation_date,
-            )
-            
-            # Calcular FCA si hay ganancia de biomasa
-            if biomass_gain_kg and biomass_gain_kg > 0:
-                fca = BiomassCalculator.calculate_fca(float(alimento_kg), biomass_gain_kg)
-        
         # Crear o actualizar ControlStat del día
         # Los FishEvaluated hechos por múltiples usuarios en el mismo día
         # actualizan el mismo ControlStat
@@ -282,8 +248,6 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
                 "max_weight_g": max_weight,
                 "mortality_percentage": mortality_percentage,
                 "biomass_kg": biomass_kg,
-                "biomass_gain_kg": biomass_gain_kg,
-                "fca": fca,
             }
         )
         
