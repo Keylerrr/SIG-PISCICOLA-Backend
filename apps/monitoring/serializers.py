@@ -155,11 +155,9 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
                     batch.status = Batch.Status.DEAD
                     batch.save(update_fields=["status"])
             else:
-                # Mortalidad general: descontar proporcionalmente de todos los batches del ciclo
-                
-                # Obtener todos los batches activos del ciclo
+                # Mortalidad general: descontar proporcionalmente de todos los batches del estanque
                 pond_batches = PondBatch.objects.filter(
-                    pond__cycle_pond_batches__cycle=cycle,
+                    pond=pond,
                     end_date__isnull=True
                 ).select_related("batch")
                 
@@ -176,20 +174,22 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
                             pond_batch.current_quantity = 0
                         pond_batch.save(update_fields=["current_quantity"])
         
-        # Verificar si todos los batches del ciclo están DEAD
-        all_batches_in_cycle = Batch.objects.filter(
-            pondbatch__pond__cycle_pond_batches__cycle=cycle
-        ).distinct()
+        # Verificar si todos los batches del estanque están DEAD
+        all_pond_batches = PondBatch.objects.filter(
+            pond=pond,
+            end_date__isnull=True
+        ).select_related("batch")
         
-        all_dead = all_batches_in_cycle.exclude(status=Batch.Status.DEAD).count() == 0
+        all_dead = all_pond_batches.exclude(batch__status=Batch.Status.DEAD).count() == 0
         
-        if all_dead and all_batches_in_cycle.exists():
-            # Si todos los batches están muertos, cancelar el ciclo
+        if all_dead and all_pond_batches.exists():
+            # Si todos los batches del estanque están muertos, cancelar el ciclo
             cycle.state = Cycle.State.CANCELLED
             cycle.save(update_fields=["state"])
         
         # ========== GENERAR CONTROL STAT AUTOMÁTICAMENTE ==========
         # Buscar todos los FishEvaluated del mismo día/ciclo/pond (incluyendo el recién creado)
+        evaluation_date = validated_data.get("evaluation_date")
         fish_evals_today = FishEvaluated.objects.filter(
             cycle=cycle,
             pond=pond,
