@@ -50,7 +50,9 @@ class FishEvaluatedViewSet(viewsets.ModelViewSet):
         return qs.order_by("-evaluation_date")
 
     def perform_create(self, serializer):
-        serializer.save()
+        cycle_id = self.kwargs.get("cycle_pk")
+        pond_pk = self.kwargs.get("pond_pk")
+        serializer.save(cycle_id=cycle_id, pond_id=pond_pk)
 
     def destroy(self, request, *args, **kwargs):
         obj = self.get_object()
@@ -97,7 +99,9 @@ class DailyStatViewSet(viewsets.ModelViewSet):
         return qs.order_by("-stat_date", "-created_at")
 
     def perform_create(self, serializer):
-        serializer.save()
+        cycle_id = self.kwargs.get("cycle_pk")
+        pond_pk = self.kwargs.get("pond_pk")
+        serializer.save(cycle_id=cycle_id, pond_id=pond_pk)
 
     def destroy(self, request, *args, **kwargs):
         obj = self.get_object()
@@ -106,21 +110,19 @@ class DailyStatViewSet(viewsets.ModelViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class ControlStatViewSet(viewsets.ModelViewSet):
+class ControlStatViewSet(viewsets.ReadOnlyModelViewSet):
     """
-    ViewSet para gestionar estadísticas de control.
+    ViewSet para LEER estadísticas de control (READ-ONLY).
 
-    Los campos de estadísticas se calculan automáticamente a partir de FishEvaluated.
+    ControlStat se genera AUTOMÁTICAMENTE cada vez que se crea un FishEvaluated.
+    El frontend solo puede listar/consultar, no crear/editar/eliminar.
 
     Permisos:
     - GET: IsFarmMember
-    - POST/PATCH/DELETE: AdminOr(CanManageMonitoring)
     """
     serializer_class = ControlStatSerializer
 
     def get_permissions(self):
-        if self.request.method in ("POST", "PATCH", "DELETE"):
-            return [AdminOr(CanManageMonitoring)()]
         return [AdminOr(IsFarmMember)()]
 
     def get_queryset(self):
@@ -144,14 +146,6 @@ class ControlStatViewSet(viewsets.ModelViewSet):
         # Si no viene cycle_pk, es lista por granja (sin validación de pond)
 
         return qs.order_by("-control_date")
-
-    def perform_create(self, serializer):
-        serializer.save()
-
-    def destroy(self, request, *args, **kwargs):
-        obj = self.get_object()
-        obj.deleted_at = timezone.now()
-        obj.save(update_fields=["deleted_at"])
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
