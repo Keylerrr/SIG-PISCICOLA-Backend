@@ -59,7 +59,6 @@ class FishEvaluated(models.Model):
     class Meta:
         db_table = "fish_evaluated"
         ordering = ["-evaluation_date"]
-        unique_together = ("cycle", "evaluation_date", "pond")
         verbose_name = "Fish Evaluation"
         verbose_name_plural = "Fish Evaluations"
 
