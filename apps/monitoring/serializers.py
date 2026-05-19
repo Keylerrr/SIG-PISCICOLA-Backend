@@ -129,8 +129,20 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
         max_weight = validated_data.get("max_weight_g", 0)
         validated_data["avg_weight_g"] = (min_weight + max_weight) / 2
         
-        pond = validated_data.get("pond")
-        cycle = validated_data.get("cycle")
+        # Obtener cycle y pond desde validated_data
+        # Si vienen como IDs, resolverlos
+        if "cycle_id" in validated_data and "cycle" not in validated_data:
+            cycle = Cycle.objects.get(id=validated_data.pop("cycle_id"))
+            validated_data["cycle"] = cycle
+        else:
+            cycle = validated_data.get("cycle")
+        
+        if "pond_id" in validated_data and "pond" not in validated_data:
+            pond = Pond.objects.get(id=validated_data.pop("pond_id"))
+            validated_data["pond"] = pond
+        else:
+            pond = validated_data.get("pond")
+        
         evaluation_date = validated_data.get("evaluation_date")
         mortality_quantity = validated_data.get("mortality_quantity", 0)
         sampled_quantity = validated_data.get("sampled_quantity", 0)
