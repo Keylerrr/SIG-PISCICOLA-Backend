@@ -24,10 +24,11 @@ from .constants import (
 from .models import FeedingEvent, FeedingPlan, FeedingSchedule
 from .utils import (
     active_plan_date_overlap,
+    clear_feeding_inventory_for_event,
+    collect_feeding_plan_business_errors,
     create_feeding_events_for_plan,
     feeding_plan_lifecycle_state,
-    register_feeding_consume,
-    collect_feeding_plan_business_errors,
+    sync_feeding_inventory_for_event,
 )
 
 
@@ -894,11 +895,23 @@ class FeedingEventUpdateSerializer(serializers.ModelSerializer):
 
         if instance.status == FeedingEvent.Status.COMPLETED:
             if "status" in data:
+                if data["status"] == FeedingEvent.Status.SKIPPED:
+                    extra = set(data) - {"status"}
+                    if extra:
+                        raise serializers.ValidationError(
+                            {
+                                "status": (
+                                    "Para omitir un evento completado envíe solo "
+                                    "status=skipped (se devolverá el inventario descontado)."
+                                )
+                            }
+                        )
+                    return data
                 raise serializers.ValidationError(
                     {
                         "status": (
-                            "No puede cambiar el estado de un evento ya completado; solo "
-                            "puede corregir la cantidad y la unidad reales."
+                            "No puede cambiar el estado de un evento ya completado; use "
+                            "status=skipped para revertir o corrija cantidad y unidad."
                         )
                     }
                 )
@@ -974,11 +987,31 @@ class FeedingEventUpdateSerializer(serializers.ModelSerializer):
         )
 
         if instance.status == FeedingEvent.Status.COMPLETED:
-            if "actual_quantity" in validated_data:
-                instance.actual_quantity = validated_data["actual_quantity"]
-            if "actual_unit" in validated_data:
-                instance.actual_unit = validated_data["actual_unit"]
-            instance.save()
+            if validated_data.get("status") == FeedingEvent.Status.SKIPPED:
+                with transaction.atomic():
+                    clear_feeding_inventory_for_event(instance.pk)
+                    instance.status = FeedingEvent.Status.SKIPPED
+                    instance.actual_quantity = None
+                    instance.actual_unit = None
+                    instance.completed_at = timezone.now()
+                    if user is not None:
+                        instance.completed_by = user
+                    instance.save()
+                return instance
+
+            with transaction.atomic():
+                if "actual_quantity" in validated_data:
+                    instance.actual_quantity = validated_data["actual_quantity"]
+                if "actual_unit" in validated_data:
+                    instance.actual_unit = validated_data["actual_unit"]
+                if "actual_quantity" in validated_data or "actual_unit" in validated_data:
+                    try:
+                        sync_feeding_inventory_for_event(instance)
+                    except ValueError as exc:
+                        raise serializers.ValidationError(
+                            {"detail": str(exc)}
+                        ) from exc
+                instance.save()
             return instance
 
         new_status = validated_data["status"]
@@ -988,7 +1021,7 @@ class FeedingEventUpdateSerializer(serializers.ModelSerializer):
                 instance.actual_quantity = validated_data["actual_quantity"]
                 instance.actual_unit = validated_data["actual_unit"]
                 try:
-                    register_feeding_consume(instance)
+                    sync_feeding_inventory_for_event(instance)
                 except ValueError as exc:
                     raise serializers.ValidationError(
                         {"detail": str(exc)}
@@ -1001,9 +1034,11 @@ class FeedingEventUpdateSerializer(serializers.ModelSerializer):
                 instance.save()
             return instance
 
-        instance.status = new_status
-        instance.completed_at = timezone.now()
-        if user is not None:
-            instance.completed_by = user
-        instance.save()
+        with transaction.atomic():
+            clear_feeding_inventory_for_event(instance.pk)
+            instance.status = new_status
+            instance.completed_at = timezone.now()
+            if user is not None:
+                instance.completed_by = user
+            instance.save()
         return instance

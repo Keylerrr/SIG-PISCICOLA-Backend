@@ -2,6 +2,7 @@ from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.response import Response
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 
 from apps.accounts.permissions import AdminOr
 from apps.farms.permissions import IsFarmMember, CanManageCycle
@@ -50,10 +51,20 @@ class CycleViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")
+        pond_pk = self.kwargs.get("pond_pk")
+        
+        # Requerir pond_pk - los ciclos SOLO se ven por estanque específico
+        if not pond_pk:
+            raise ValidationError(
+                "Debe especificar un estanque (pond_pk). "
+                "Use: /farms/<farm_pk>/ponds/<pond_pk>/cycles/"
+            )
+        
         queryset = Cycle.objects.filter(
             farm_id=farm_id,
+            pond_id=pond_pk,
             deleted_at__isnull=True,
-        ).select_related("production_plan")
+        ).select_related("production_plan", "pond")
         
         # Filtrar por especie si se proporciona
         specie_id = self.request.query_params.get("specie_id")
@@ -71,7 +82,8 @@ class CycleViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         farm_id = self.kwargs.get("farm_pk")
-        serializer.save(farm_id=farm_id)
+        pond_pk = self.kwargs.get("pond_pk")
+        serializer.save(farm_id=farm_id, pond_id=pond_pk)
 
     def destroy(self, request, *args, **kwargs):
         cycle = self.get_object()
@@ -115,11 +127,11 @@ class CycleViewSet(viewsets.ModelViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=True, methods=["get"])
-    def current_state(self, request, farm_pk=None, pk=None):
+    def current_state(self, request, farm_pk=None, pond_pk=None, pk=None):
         """
         Retorna el estado actual dinámico del ciclo basado en datos de monitoring.
         
-        GET /farms/{farm_pk}/cycles/{cycle_pk}/current_state/
+        GET /farms/{farm_pk}/ponds/{pond_pk}/cycles/{pk}/current_state/
         
         Respuesta:
         {
@@ -151,10 +163,20 @@ class CyclePondBatchViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         farm_id = self.kwargs.get("farm_pk")
+        pond_pk = self.kwargs.get("pond_pk")
         cycle_id = self.kwargs.get("cycle_pk")
         
+        # Validar que pond_pk y cycle_pk estén presentes
+        if not pond_pk or not cycle_id:
+            raise ValidationError(
+                "Debe especificar estanque (pond_pk) y ciclo (cycle_pk). "
+                "Use: /farms/<farm_pk>/ponds/<pond_pk>/cycles/<cycle_pk>/cycle-batches/"
+            )
+        
         queryset = CyclePondBatch.objects.filter(
-            cycle__farm_id=farm_id
+            cycle__farm_id=farm_id,
+            cycle__pond_id=pond_pk,  # Validar que ciclo está en el estanque correcto
+            cycle_id=cycle_id,
         ).select_related(
             "cycle",
             "pond_batch",
@@ -163,11 +185,27 @@ class CyclePondBatchViewSet(viewsets.ModelViewSet):
             "pond_batch__pond",
         ).order_by("-id")
         
-        # Si viene cycle_pk en la URL, filtra por ese ciclo específico
-        if cycle_id:
-            queryset = queryset.filter(cycle_id=cycle_id)
-        
         return queryset
 
     def perform_create(self, serializer):
-        serializer.save()
+        """Al crear un CyclePondBatch, asegurar que sea del mismo estanque del ciclo."""
+        farm_id = self.kwargs.get("farm_pk")
+        pond_pk = self.kwargs.get("pond_pk")
+        cycle_id = self.kwargs.get("cycle_pk")
+        
+        # Validar que pond_pk y cycle_pk estén presentes
+        if not pond_pk or not cycle_id:
+            raise ValidationError(
+                "Debe especificar estanque (pond_pk) y ciclo (cycle_pk)."
+            )
+        
+        # Obtener ciclo y validar que pertenece al estanque
+        try:
+            cycle = Cycle.objects.get(id=cycle_id, pond_id=pond_pk, farm_id=farm_id)
+        except Cycle.DoesNotExist:
+            raise ValidationError(
+                "Ciclo no encontrado o no pertenece al estanque/granja especificados."
+            )
+        
+        # La validación de que pond_batch.pond == cycle.pond se ejecutará en el clean() del modelo
+        serializer.save(cycle=cycle)

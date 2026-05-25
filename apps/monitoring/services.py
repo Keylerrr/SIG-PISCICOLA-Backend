@@ -1,7 +1,10 @@
-from typing import Optional, Dict
+from typing import Optional, Dict, TYPE_CHECKING
 from django.db.models import QuerySet, Sum, Avg, Min, Max
 
 from apps.purchases.models import InventoryMovement
+
+if TYPE_CHECKING:
+    from .models import ControlStat
 
 
 class BiomassCalculator:
@@ -63,48 +66,57 @@ class BiomassCalculator:
         return current_biomass_kg - previous_biomass_kg
 
     @staticmethod
-    def get_feed_consumed_since_last_control(
-        cycle_id: int, pond_id: int, control_date
-    ) -> float:
+    def get_sample_live_quantity(
+        sampled_quantity: int, mortality_quantity: int = 0
+    ) -> int:
+        """Peces vivos en la muestra: evaluados menos mortalidad del muestreo."""
+        return max(0, sampled_quantity - mortality_quantity)
+
+    @staticmethod
+    def get_pond_live_quantity(pond_id: int) -> int:
         """
-        Obtiene el alimento consumido desde el último control hasta la fecha actual.
-        Busca todos los InventoryMovement type='Out' del ciclo después del último
-        ControlStat anterior a control_date, sumando quantities.
+        Cantidad de peces vivos en el estanque (stock operativo de lotes activos).
+        """
+        from apps.batch.models import PondBatch
 
-        Args:
-            cycle_id: ID del ciclo
-            pond_id: ID del estanque
-            control_date: Fecha del control
+        total = (
+            PondBatch.objects.filter(pond_id=pond_id, end_date__isnull=True)
+            .aggregate(total=Sum("current_quantity"))["total"]
+            or 0
+        )
+        return int(total)
 
-        Returns:
-            Cantidad total de alimento consumido desde el último control
+    @staticmethod
+    def get_previous_control_stat(
+        cycle_id: int, pond_id: int, control_date
+    ) -> Optional["ControlStat"]:
+        """
+        ControlStat de referencia para calcular ganancia de biomasa.
+
+        - Si ya hay un control en la misma fecha, se usa ese (evaluación anterior del día).
+        - Si no, el control inmediatamente anterior por fecha.
         """
         from .models import ControlStat
 
-        # Buscar el último ControlStat anterior a esta fecha
-        last_control = (
+        same_day = ControlStat.objects.filter(
+            cycle_id=cycle_id,
+            pond_id=pond_id,
+            control_date=control_date,
+            deleted_at__isnull=True,
+        ).first()
+        if same_day:
+            return same_day
+
+        return (
             ControlStat.objects.filter(
-                cycle_id=cycle_id, pond_id=pond_id, control_date__lt=control_date, deleted_at__isnull=True
+                cycle_id=cycle_id,
+                pond_id=pond_id,
+                control_date__lt=control_date,
+                deleted_at__isnull=True,
             )
             .order_by("-control_date")
             .first()
         )
-
-        start_date = last_control.control_date if last_control else None
-
-        # Buscar todos los InventoryMovement de alimento después de esta fecha
-        query = InventoryMovement.objects.filter(
-            cycle_id=cycle_id,
-            pond_id=pond_id,
-            movement_type="Out",
-            source_type="DAILY",
-        )
-
-        if start_date:
-            query = query.filter(created_at__date__gt=start_date)
-
-        total = query.aggregate(total=Sum("quantity"))
-        return float(total["total"] or 0)
 
     @staticmethod
     def get_active_pond_weights(pond_id: int) -> Dict:

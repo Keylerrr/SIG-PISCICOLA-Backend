@@ -9,7 +9,7 @@ from .views import (
 urlpatterns = [
     # Fish Evaluations
     path(
-        "farms/<int:farm_pk>/cycles/<int:cycle_pk>/fish-evaluations/",
+        "farms/<int:farm_pk>/ponds/<int:pond_pk>/cycles/<int:cycle_pk>/fish-evaluations/",
         FishEvaluatedViewSet.as_view(
             {
                 "get": "list",
@@ -19,7 +19,7 @@ urlpatterns = [
         name="fish-evaluation-list",
     ),
     path(
-        "farms/<int:farm_pk>/cycles/<int:cycle_pk>/fish-evaluations/<int:pk>/",
+        "farms/<int:farm_pk>/ponds/<int:pond_pk>/cycles/<int:cycle_pk>/fish-evaluations/<int:pk>/",
         FishEvaluatedViewSet.as_view(
             {
                 "get": "retrieve",
@@ -41,7 +41,7 @@ urlpatterns = [
         name="daily-stat-list",
     ),
     path(
-        "farms/<int:farm_pk>/cycles/<int:cycle_pk>/daily-stats/",
+        "farms/<int:farm_pk>/ponds/<int:pond_pk>/cycles/<int:cycle_pk>/daily-stats/",
         DailyStatViewSet.as_view(
             {
                 "get": "list",
@@ -61,23 +61,21 @@ urlpatterns = [
         ),
         name="daily-stat-detail",
     ),
-    # Control Stats
+    # Control Stats (READ-ONLY - generados automáticamente desde FishEvaluated)
     path(
         "farms/<int:farm_pk>/control-stats/",
         ControlStatViewSet.as_view(
             {
                 "get": "list",
-                "post": "create",
             }
         ),
         name="control-stat-list",
     ),
     path(
-        "farms/<int:farm_pk>/cycles/<int:cycle_pk>/control-stats/",
+        "farms/<int:farm_pk>/ponds/<int:pond_pk>/cycles/<int:cycle_pk>/control-stats/",
         ControlStatViewSet.as_view(
             {
                 "get": "list",
-                "post": "create",
             }
         ),
         name="control-stat-cycle-list",
@@ -87,8 +85,6 @@ urlpatterns = [
         ControlStatViewSet.as_view(
             {
                 "get": "retrieve",
-                "patch": "partial_update",
-                "delete": "destroy",
             }
         ),
         name="control-stat-detail",

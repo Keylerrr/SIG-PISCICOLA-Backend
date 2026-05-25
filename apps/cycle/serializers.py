@@ -179,7 +179,7 @@ class CycleSerializer(serializers.ModelSerializer):
             "updated_at",
             "deleted_at",
         ]
-        read_only_fields = ["pond", "created_at", "updated_at"]
+        read_only_fields = ["farm", "pond", "created_at", "updated_at"]
 
     def validate(self, data):
         from apps.batch.models import Batch
@@ -326,14 +326,24 @@ class CyclePondBatchSerializer(serializers.ModelSerializer):
         if pond_batch:
             from apps.ponds.models import Pond
             pond = pond_batch.pond
-            if pond.status in [Pond.Status.INACTIVE, Pond.Status.CLEANING]:
+            
+            # Validar que el estanque esté específicamente en estado "EN USO"
+            if pond.status != Pond.Status.IN_USE:
                 raise serializers.ValidationError({
-                    "pond_batch": f"El estanque está en estado '{pond.get_status_display()}'. "
-                                 "No se pueden agregar lotes a estanques INACTIVOS o EN LIMPIEZA."
+                    "pond_batch": f"El estanque debe estar en estado 'EN USO' para asignar lotes. "
+                                 f"Estado actual: '{pond.get_status_display()}'."
                 })
 
         if cycle and pond_batch:
             batch = pond_batch.batch
+            
+            # VALIDACIÓN CRÍTICA: El pond_batch debe estar en el MISMO estanque que el ciclo
+            if pond_batch.pond_id != cycle.pond_id:
+                raise serializers.ValidationError({
+                    "pond_batch": f"El lote debe estar en el MISMO estanque del ciclo. "
+                                 f"Ciclo en estanque {cycle.pond.code}, "
+                                 f"pero lote en estanque {pond_batch.pond.code}."
+                })
             
             # Validar que el pond_batch no esté ya vinculado al ciclo
             existing = CyclePondBatch.objects.filter(cycle=cycle, pond_batch=pond_batch)
