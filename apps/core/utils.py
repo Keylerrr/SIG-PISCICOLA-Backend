@@ -1,5 +1,8 @@
 from django.utils import timezone
 
+from apps.core.services.alerts import create_alert as create_alert_service
+from apps.core.services.alerts import resolve_alerts as resolve_alerts_service
+
 from .models import Alert
 
 
@@ -16,37 +19,79 @@ def create_alert(
     pond=None,
     cycle=None,
 ) -> Alert:
-    existing = Alert.objects.filter(
+    return create_alert_service(
         farm=farm,
         source_type=source_type,
-        source_id=source_id,
-        is_resolved=False,
-    ).first()
-
-    if existing:
-        return existing
-
-    return Alert.objects.create(
-        farm=farm,
-        pond=pond,
-        cycle=cycle,
-        source_type=source_type,
-        source_id=source_id,
         description=description,
         message=message,
+        severity=severity,
+        source_id=source_id,
         value=value,
         threshold=threshold,
-        severity=severity,
+        pond=pond,
+        cycle=cycle,
     )
 
 
 def resolve_alert(*, source_type: str, source_id: int, resolved_by=None) -> None:
-    Alert.objects.filter(
+    resolve_alerts_service(
         source_type=source_type,
         source_id=source_id,
-        is_resolved=False,
-    ).update(
-        is_resolved=True,
-        resolved_at=timezone.now(),
         resolved_by=resolved_by,
     )
+
+
+def ensure_overdue_events_alerts(farm_id: int) -> None:
+    """Lightweight check to create alerts for overdue FeedingEvent and TreatmentEvent.
+
+    This function is safe to call frequently (e.g., from the alerts endpoint) because
+    it only scans scheduled events with date <= today for the given farm and uses
+    `create_alert` which avoids duplicates.
+    """
+    from datetime import date
+
+    from apps.feeding.models import FeedingEvent
+
+    try:
+        from apps.health.models import TreatmentEvent
+    except Exception:
+        TreatmentEvent = None
+
+    today = date.today()
+
+    # Feeding overdue
+    feeding_qs = FeedingEvent.objects.filter(
+        farm_id=farm_id,
+        date__lte=today,
+        status=FeedingEvent.Status.SCHEDULED,
+    ).select_related("farm", "cycle", "cycle__pond")
+    for ev in feeding_qs:
+        create_alert(
+            farm=ev.farm,
+            pond=ev.cycle.pond if ev.cycle_id else None,
+            cycle=ev.cycle,
+            source_type=Alert.SourceType.FEEDING,
+            source_id=ev.id,
+            description=f"FeedingEvent pendiente ({ev.id})",
+            message=f"Evento programado para {ev.date} no cumplido.",
+            severity=Alert.Severity.MEDIUM,
+        )
+
+    # Treatment overdue
+    if TreatmentEvent is not None:
+        treat_qs = TreatmentEvent.objects.filter(
+            farm_id=farm_id,
+            date__lte=today,
+            status=TreatmentEvent.Status.SCHEDULED,
+        ).select_related("farm", "cycle", "cycle__pond")
+        for ev in treat_qs:
+            create_alert(
+                farm=ev.farm,
+                pond=ev.cycle.pond if ev.cycle_id else None,
+                cycle=ev.cycle,
+                source_type=Alert.SourceType.HEALTH,
+                source_id=ev.id,
+                description=f"TreatmentEvent pendiente ({ev.id})",
+                message=f"Evento de tratamiento programado para {ev.date} no cumplido.",
+                severity=Alert.Severity.MEDIUM,
+            )

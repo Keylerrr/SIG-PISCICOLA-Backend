@@ -1,7 +1,7 @@
-from rest_framework.routers import DefaultRouter
 from django.urls import path
+from rest_framework.routers import DefaultRouter
 
-from .views import ProductionPlanViewSet, CycleViewSet, CyclePondBatchViewSet
+from .views import CyclePondBatchViewSet, CycleViewSet, ProductionPlanViewSet
 
 router = DefaultRouter()
 
@@ -47,6 +47,15 @@ urlpatterns = [
             }
         ),
         name="pond-cycle-detail",
+    ),
+    path(
+        "farms/<int:farm_pk>/ponds/<int:pond_pk>/cycles/<int:pk>/current_state/",
+        CycleViewSet.as_view(
+            {
+                "get": "current_state",
+            }
+        ),
+        name="pond-cycle-current-state",
     ),
     path(
         "farms/<int:farm_pk>/ponds/<int:pond_pk>/cycles/<int:cycle_pk>/cycle-batches/",

@@ -37,6 +37,7 @@ INSTALLED_APPS = [
     "apps.purchases",
     "apps.feeding",
     "apps.monitoring",
+    "apps.harvest",
     "apps.health",
 ]
 

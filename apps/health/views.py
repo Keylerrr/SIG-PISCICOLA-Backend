@@ -12,22 +12,16 @@ from apps.farms.permissions import IsFarmMember
 
 from .models import HealthStat, TreatmentEvent, TreatmentPlan
 from .permissions import CanManageReviews
-from .serializers import (
-    HealthStatSerializer,
-    HealthStatUpdateSerializer,
-    TreatmentEventSerializer,
-    TreatmentPlanSerializer,
-)
-from .utils import (
-    HEALTH_STAT_DELETE_CONFIRM_REQUIRED_MESSAGE,
-    cancel_treatment_plan,
-    health_stat_delete_blockers,
-    sync_treatment_plan_queryset,
-    sync_treatment_plan_status,
-    treatment_plan_lifecycle_state,
-    update_in_progress_treatment_plan,
-    update_scheduled_treatment_plan,
-)
+from .serializers import (HealthStatCreateSerializer, HealthStatSerializer,
+                          HealthStatUpdateSerializer,
+                          HealthStatWithFishEvaluationCreateSerializer,
+                          TreatmentEventSerializer, TreatmentPlanSerializer)
+from .utils import (HEALTH_STAT_DELETE_CONFIRM_REQUIRED_MESSAGE,
+                    cancel_treatment_plan, health_stat_delete_blockers,
+                    sync_treatment_plan_queryset, sync_treatment_plan_status,
+                    treatment_plan_lifecycle_state,
+                    update_in_progress_treatment_plan,
+                    update_scheduled_treatment_plan)
 
 
 def _get_farm(farm_id):
@@ -125,7 +119,9 @@ def _parse_optional_date(params, key: str):
         )
 
 
-def _parse_choice_param(params, key: str, *, choices) -> tuple[str | None, Response | None]:
+def _parse_choice_param(
+    params, key: str, *, choices
+) -> tuple[str | None, Response | None]:
     raw = params.get(key)
     if raw is None or raw == "":
         return None, None
@@ -145,9 +141,7 @@ def _parse_optional_bool(params, key: str) -> tuple[bool | None, Response | None
         return True, None
     if raw.lower() in ("false", "0", "no"):
         return False, None
-    return None, _bad_request(
-        f"Parámetro '{key}' inválido. Use true o false."
-    )
+    return None, _bad_request(f"Parámetro '{key}' inválido. Use true o false.")
 
 
 def _require_delete_confirmation(request) -> Response | None:
@@ -340,7 +334,46 @@ def _get_treatment_plan_for_farm(
         return None
 
 
+def _prepare_health_stat_body(request, farm_pk, pond_pk, cycle_pk):
+    body = request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
+    raw_farm = body.get("farm")
+    if raw_farm is not None:
+        try:
+            if int(raw_farm) != farm_pk:
+                return None, _bad_request(
+                    "El campo «farm» del cuerpo debe coincidir con la granja de la URL."
+                )
+        except (TypeError, ValueError):
+            return None, _bad_request("El campo «farm» debe ser un entero válido.")
+    body["farm"] = farm_pk
+
+    raw_pond = body.get("pond")
+    if raw_pond is not None:
+        try:
+            if int(raw_pond) != pond_pk:
+                return None, _bad_request(
+                    "El campo «pond» del cuerpo debe coincidir con el estanque de la URL."
+                )
+        except (TypeError, ValueError):
+            return None, _bad_request("El campo «pond» debe ser un entero válido.")
+    body["pond"] = pond_pk
+
+    raw_cycle = body.get("cycle")
+    if raw_cycle is not None:
+        try:
+            if int(raw_cycle) != cycle_pk:
+                return None, _bad_request(
+                    "El campo «cycle» del cuerpo debe coincidir con el ciclo de la URL."
+                )
+        except (TypeError, ValueError):
+            return None, _bad_request("El campo «cycle» debe ser un entero válido.")
+    body["cycle"] = cycle_pk
+    return body, None
+
+
 class CycleHealthStatListCreateView(APIView):
+    """GET listado y POST de registro de salud (sin muestreo en el mismo body)."""
+
     def get_permissions(self):
         if self.request.method == "GET":
             return [AdminOr(IsFarmMember)()]
@@ -374,7 +407,7 @@ class CycleHealthStatListCreateView(APIView):
         return Response(HealthStatSerializer(qs, many=True).data)
 
     @extend_schema(
-        request=HealthStatSerializer,
+        request=HealthStatCreateSerializer,
         responses={201: HealthStatSerializer},
     )
     def post(self, request, farm_pk, pond_pk, cycle_pk):
@@ -382,45 +415,42 @@ class CycleHealthStatListCreateView(APIView):
         if err:
             return err
 
-        body = (
-            request.data.copy()
-            if hasattr(request.data, "copy")
-            else dict(request.data)
+        body, err = _prepare_health_stat_body(request, farm_pk, pond_pk, cycle_pk)
+        if err:
+            return err
+
+        serializer = HealthStatCreateSerializer(
+            data=body,
+            context={"request": request, "farm": farm},
         )
-        raw_farm = body.get("farm")
-        if raw_farm is not None:
-            try:
-                if int(raw_farm) != farm_pk:
-                    return _bad_request(
-                        "El campo «farm» del cuerpo debe coincidir con la granja de la URL."
-                    )
-            except (TypeError, ValueError):
-                return _bad_request("El campo «farm» debe ser un entero válido.")
-        body["farm"] = farm_pk
+        serializer.is_valid(raise_exception=True)
+        instance = serializer.save()
+        return Response(
+            HealthStatSerializer(instance, context={"request": request}).data,
+            status=status.HTTP_201_CREATED,
+        )
 
-        raw_pond = body.get("pond")
-        if raw_pond is not None:
-            try:
-                if int(raw_pond) != pond_pk:
-                    return _bad_request(
-                        "El campo «pond» del cuerpo debe coincidir con el estanque de la URL."
-                    )
-            except (TypeError, ValueError):
-                return _bad_request("El campo «pond» debe ser un entero válido.")
-        body["pond"] = pond_pk
 
-        raw_cycle = body.get("cycle")
-        if raw_cycle is not None:
-            try:
-                if int(raw_cycle) != cycle_pk:
-                    return _bad_request(
-                        "El campo «cycle» del cuerpo debe coincidir con el ciclo de la URL."
-                    )
-            except (TypeError, ValueError):
-                return _bad_request("El campo «cycle» debe ser un entero válido.")
-        body["cycle"] = cycle_pk
+class CycleHealthStatWithFishEvaluationCreateView(APIView):
+    """POST combinado: registro de salud + evaluación de peces."""
 
-        serializer = HealthStatSerializer(
+    def get_permissions(self):
+        return [AdminOr(CanManageReviews)()]
+
+    @extend_schema(
+        request=HealthStatWithFishEvaluationCreateSerializer,
+        responses={201: HealthStatWithFishEvaluationCreateSerializer},
+    )
+    def post(self, request, farm_pk, pond_pk, cycle_pk):
+        farm, _, err = _validate_pond_cycle_scope(farm_pk, pond_pk, cycle_pk)
+        if err:
+            return err
+
+        body, err = _prepare_health_stat_body(request, farm_pk, pond_pk, cycle_pk)
+        if err:
+            return err
+
+        serializer = HealthStatWithFishEvaluationCreateSerializer(
             data=body,
             context={"request": request, "farm": farm},
         )
@@ -564,9 +594,7 @@ class HealthStatTreatmentPlanListCreateView(APIView):
             return _health_stat_not_found_response()
 
         body = (
-            request.data.copy()
-            if hasattr(request.data, "copy")
-            else dict(request.data)
+            request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
         )
         raw_hs = body.get("health_stat")
         if raw_hs is not None:
@@ -791,20 +819,24 @@ class CycleTreatmentEventListView(APIView):
         if err:
             return err
 
-        qs = TreatmentEvent.objects.filter(
-            farm_id=farm_pk,
-            cycle_id=cycle_pk,
-            treatment_plan__health_stat__pond_id=pond_pk,
-        ).select_related(
-            "cycle",
-            "treatment_plan",
-            "treatment_plan__health_stat",
-            "treatment_plan__health_stat__pond",
-            "farm",
-            "planned_unit",
-            "actual_unit",
-            "completed_by",
-        ).exclude(treatment_plan__status=TreatmentPlan.Status.CANCELLED)
+        qs = (
+            TreatmentEvent.objects.filter(
+                farm_id=farm_pk,
+                cycle_id=cycle_pk,
+                treatment_plan__health_stat__pond_id=pond_pk,
+            )
+            .select_related(
+                "cycle",
+                "treatment_plan",
+                "treatment_plan__health_stat",
+                "treatment_plan__health_stat__pond",
+                "farm",
+                "planned_unit",
+                "actual_unit",
+                "completed_by",
+            )
+            .exclude(treatment_plan__status=TreatmentPlan.Status.CANCELLED)
+        )
 
         health_stat_id, err = _parse_optional_id(request.query_params, "health_stat")
         if err:
@@ -897,7 +929,9 @@ class HealthStatTreatmentPlanEventDetailView(APIView):
             return None
 
     @extend_schema(responses={200: TreatmentEventSerializer})
-    def get(self, request, farm_pk, pond_pk, cycle_pk, health_stat_id, plan_id, event_id):
+    def get(
+        self, request, farm_pk, pond_pk, cycle_pk, health_stat_id, plan_id, event_id
+    ):
         _, _, err = _validate_pond_cycle_scope(farm_pk, pond_pk, cycle_pk)
         if err:
             return err
@@ -914,7 +948,9 @@ class HealthStatTreatmentPlanEventDetailView(APIView):
         request=TreatmentEventSerializer,
         responses={200: TreatmentEventSerializer},
     )
-    def patch(self, request, farm_pk, pond_pk, cycle_pk, health_stat_id, plan_id, event_id):
+    def patch(
+        self, request, farm_pk, pond_pk, cycle_pk, health_stat_id, plan_id, event_id
+    ):
         _, _, err = _validate_pond_cycle_scope(farm_pk, pond_pk, cycle_pk)
         if err:
             return err
@@ -927,11 +963,7 @@ class HealthStatTreatmentPlanEventDetailView(APIView):
             return _treatment_plan_not_found_response()
         if event.treatment_plan.status == TreatmentPlan.Status.COMPLETED:
             return Response(
-                {
-                    "detail": (
-                        "No se pueden modificar eventos de un plan terminado."
-                    )
-                },
+                {"detail": ("No se pueden modificar eventos de un plan terminado.")},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
