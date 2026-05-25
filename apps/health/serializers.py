@@ -1,54 +1,32 @@
 from django.db import transaction
 from django.utils import timezone
-
 from rest_framework import serializers
 
 from apps.monitoring.serializers import FishEvaluatedSerializer
 from apps.products.models import Product
 
-from .constants import FISH_EVALUATION_CREATE_FIELDS, TREATMENT_PLAN_DATE_OVERLAP_MESSAGE
+from .constants import (FISH_EVALUATION_CREATE_FIELDS,
+                        TREATMENT_PLAN_DATE_OVERLAP_MESSAGE)
 from .models import HealthStat, TreatmentEvent, TreatmentPlan
-from .utils import (
-    active_treatment_plan_date_overlap,
-    clear_treatment_inventory_for_event,
-    collect_combined_health_stat_payload_errors,
-    collect_disease_name_errors,
-    collect_health_stat_update_errors,
-    collect_health_stat_scope_errors,
-    collect_prior_fish_evaluation_errors,
-    collect_treatment_event_close_errors,
-    collect_treatment_plan_business_errors,
-    create_health_stat,
-    create_health_stat_with_fish_evaluation,
-    create_treatment_events_for_plan,
-    is_combined_health_stat_payload,
-    pop_fish_evaluation_fields,
-    sync_treatment_inventory_for_event,
-    sync_treatment_plan_status,
-    treatment_plan_lifecycle_state,
-    validate_fish_evaluation_with_monitoring,
-)
+from .utils import (active_treatment_plan_date_overlap,
+                    clear_treatment_inventory_for_event,
+                    collect_combined_health_stat_payload_errors,
+                    collect_disease_name_errors,
+                    collect_health_stat_scope_errors,
+                    collect_health_stat_update_errors,
+                    collect_prior_fish_evaluation_errors,
+                    collect_treatment_event_close_errors,
+                    collect_treatment_plan_business_errors, create_health_stat,
+                    create_health_stat_with_fish_evaluation,
+                    create_treatment_events_for_plan,
+                    pop_fish_evaluation_fields,
+                    sync_treatment_inventory_for_event,
+                    sync_treatment_plan_status, treatment_plan_lifecycle_state,
+                    validate_fish_evaluation_with_monitoring)
 
 
 class HealthStatSerializer(serializers.ModelSerializer):
-    """
-    Registro de salud (enfermedad).
-
-    POST combinado (formulario plano): mismos campos que el form + muestreo en el
-    mismo nivel. ``date`` sirve para HealthStat y para ``evaluation_date``.
-    Sin ``sampled_quantity`` → solo HealthStat (debe existir evaluación previa).
-    """
-
-    sampled_quantity = serializers.IntegerField(
-        min_value=1, required=False, write_only=True
-    )
-    mortality_quantity = serializers.IntegerField(
-        min_value=0, required=False, write_only=True, default=0
-    )
-    observations = serializers.CharField(
-        required=False, allow_null=True, allow_blank=True, write_only=True
-    )
-    batch_id = serializers.IntegerField(required=False, write_only=True)
+    """Lectura de registros de salud (listado, detalle)."""
 
     class Meta:
         model = HealthStat
@@ -61,103 +39,170 @@ class HealthStatSerializer(serializers.ModelSerializer):
             "disease_name",
             "severity_level",
             "comments",
-            "sampled_quantity",
-            "mortality_quantity",
-            "observations",
-            "batch_id",
             "created_by",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["created_by", "created_at", "updated_at"]
+        read_only_fields = fields
 
-    def validate(self, data):
+
+class _HealthStatWriteSerializer(serializers.ModelSerializer):
+    """Campos comunes para crear un HealthStat."""
+
+    class Meta:
+        model = HealthStat
+        fields = [
+            "farm",
+            "cycle",
+            "pond",
+            "date",
+            "disease_name",
+            "severity_level",
+            "comments",
+        ]
+
+    def _scope_entities(self, data):
         farm = data.get("farm") or (self.instance.farm if self.instance else None)
         cycle = data.get("cycle") or (self.instance.cycle if self.instance else None)
         pond = data.get("pond") or (self.instance.pond if self.instance else None)
         stat_date = data.get("date") or (self.instance.date if self.instance else None)
+        return farm, cycle, pond, stat_date
 
-        errors = {}
+    def _collect_scope_errors(self, data) -> dict:
+        farm, cycle, pond, stat_date = self._scope_entities(data)
         if farm and cycle and pond and stat_date is not None:
+            return collect_health_stat_scope_errors(
+                farm=farm, cycle=cycle, pond=pond, stat_date=stat_date
+            )
+        return {}
+
+
+class HealthStatCreateSerializer(_HealthStatWriteSerializer):
+    """
+    POST solo salud: requiere evaluación de peces previa en el ciclo/estanque.
+    """
+
+    def validate(self, data):
+        errors = self._collect_scope_errors(data)
+        farm, cycle, pond, stat_date = self._scope_entities(data)
+
+        if cycle and pond and stat_date is not None:
             errors.update(
-                collect_health_stat_scope_errors(
-                    farm=farm, cycle=cycle, pond=pond, stat_date=stat_date
+                collect_prior_fish_evaluation_errors(
+                    cycle=cycle, pond=pond, stat_date=stat_date
                 )
             )
-
-        if self.instance is None and cycle and pond and stat_date is not None:
-            if is_combined_health_stat_payload(data):
-                fish = {
-                    key: data[key]
-                    for key in FISH_EVALUATION_CREATE_FIELDS
-                    if key in data
-                }
-                eval_context = dict(self.context)
-                if farm is not None:
-                    eval_context["farm"] = farm
-                errors.update(
-                    validate_fish_evaluation_with_monitoring(
-                        cycle=cycle,
-                        pond=pond,
-                        stat_date=stat_date,
-                        fish=fish,
-                        serializer_context=eval_context,
-                    )
-                )
-                errors.update(
-                    collect_combined_health_stat_payload_errors(
-                        cycle=cycle,
-                        pond=pond,
-                        stat_date=stat_date,
-                        disease_name=data.get("disease_name"),
-                        fish=fish,
-                    )
-                )
-            else:
-                errors.update(
-                    collect_prior_fish_evaluation_errors(
-                        cycle=cycle, pond=pond, stat_date=stat_date
-                    )
-                )
-                errors.update(collect_disease_name_errors(data.get("disease_name")))
-
-        elif self.instance is None:
-            errors.update(collect_disease_name_errors(data.get("disease_name")))
+        errors.update(collect_disease_name_errors(data.get("disease_name")))
 
         if errors:
             raise serializers.ValidationError(errors)
         return data
 
     def create(self, validated_data):
-        fish = None
-        if is_combined_health_stat_payload(validated_data):
-            validated_data, fish = pop_fish_evaluation_fields(validated_data)
+        return create_health_stat(
+            validated_data=validated_data,
+            created_by=self.context["request"].user,
+        )
 
-        if fish is not None:
+
+class HealthStatWithFishEvaluationCreateSerializer(_HealthStatWriteSerializer):
+    """
+    POST combinado: registro de salud + evaluación de peces en un solo formulario.
+    ``date`` aplica a ambos.
+    """
+
+    sampled_quantity = serializers.IntegerField(min_value=1, write_only=True)
+    mortality_quantity = serializers.IntegerField(
+        min_value=0, required=False, write_only=True, default=0
+    )
+    min_weight_g = serializers.FloatField(min_value=0, write_only=True)
+    max_weight_g = serializers.FloatField(min_value=0, write_only=True)
+    observations = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True, write_only=True
+    )
+    batch_id = serializers.IntegerField(required=False, write_only=True)
+
+    class Meta(_HealthStatWriteSerializer.Meta):
+        fields = _HealthStatWriteSerializer.Meta.fields + [
+            "sampled_quantity",
+            "mortality_quantity",
+            "min_weight_g",
+            "max_weight_g",
+            "observations",
+            "batch_id",
+        ]
+
+    def validate(self, data):
+        errors = self._collect_scope_errors(data)
+        farm, cycle, pond, stat_date = self._scope_entities(data)
+
+        fish = {key: data[key] for key in FISH_EVALUATION_CREATE_FIELDS if key in data}
+        eval_context = dict(self.context)
+        if farm is not None:
+            eval_context["farm"] = farm
+
+        min_w = data.get("min_weight_g")
+        max_w = data.get("max_weight_g")
+        if min_w is not None and max_w is not None and min_w > max_w:
+            errors["min_weight_g"] = (
+                "El peso mínimo no puede ser mayor que el peso máximo."
+            )
+
+        if cycle and pond and stat_date is not None:
+            errors.update(
+                validate_fish_evaluation_with_monitoring(
+                    cycle=cycle,
+                    pond=pond,
+                    stat_date=stat_date,
+                    fish=fish,
+                    serializer_context=eval_context,
+                )
+            )
+            errors.update(
+                collect_combined_health_stat_payload_errors(
+                    cycle=cycle,
+                    pond=pond,
+                    stat_date=stat_date,
+                    disease_name=data.get("disease_name"),
+                    fish=fish,
+                )
+            )
+        errors.update(collect_disease_name_errors(data.get("disease_name")))
+
+        if errors:
+            raise serializers.ValidationError(errors)
+        return data
+
+    def create(self, validated_data):
+        validated_data, fish = pop_fish_evaluation_fields(validated_data)
+        try:
             result = create_health_stat_with_fish_evaluation(
                 validated_data=validated_data,
                 fish=fish,
                 created_by=self.context["request"].user,
                 serializer_context=self.context,
             )
-            self.context["_combined_create"] = result
-            return result["health_stat"]
-        return create_health_stat(
-            validated_data=validated_data,
-            created_by=self.context["request"].user,
-        )
+        except ValueError as exc:
+            if exc.args and isinstance(exc.args[0], dict):
+                raise serializers.ValidationError(exc.args[0]) from exc
+            raise
+        self.context["_combined_create"] = result
+        return result["health_stat"]
 
     def to_representation(self, instance):
         combined = self.context.get("_combined_create")
         if combined and combined.get("health_stat").pk == instance.pk:
             return {
-                "health_stat": super().to_representation(instance),
+                "health_stat": HealthStatSerializer(
+                    instance,
+                    context=self.context,
+                ).data,
                 "fish_evaluation": FishEvaluatedSerializer(
                     combined["fish_evaluation"],
                     context=self.context,
                 ).data,
             }
-        return super().to_representation(instance)
+        return HealthStatSerializer(instance, context=self.context).data
 
 
 class HealthStatUpdateSerializer(serializers.ModelSerializer):
@@ -259,7 +304,9 @@ class TreatmentPlanSerializer(serializers.ModelSerializer):
                 "No se puede modificar un plan cuya fecha de fin ya pasó."
             )
         if old.status == TreatmentPlan.Status.CANCELLED:
-            raise serializers.ValidationError("No se puede modificar un plan cancelado.")
+            raise serializers.ValidationError(
+                "No se puede modificar un plan cancelado."
+            )
 
         health_stat = self._resolve_health_stat(
             data["health_stat"],
@@ -307,6 +354,15 @@ class TreatmentPlanSerializer(serializers.ModelSerializer):
 
         return data
 
+    @staticmethod
+    def _resolve_plan_product(product):
+        if product is None:
+            return None
+        product_pk = getattr(product, "pk", product)
+        return (
+            Product.objects.select_related("type_product").filter(pk=product_pk).first()
+        )
+
     def _resolve_health_stat(self, health_stat, farm_id, fixed_health_stat_id=None):
         health_stat_pk = getattr(health_stat, "pk", health_stat)
         try:
@@ -319,11 +375,7 @@ class TreatmentPlanSerializer(serializers.ModelSerializer):
             ) from None
         if fixed_health_stat_id is not None and hs.pk != fixed_health_stat_id:
             raise serializers.ValidationError(
-                {
-                    "health_stat": (
-                        "El registro de salud no coincide con el de la URL."
-                    )
-                }
+                {"health_stat": ("El registro de salud no coincide con el de la URL.")}
             )
         if hs.farm_id != farm_id:
             raise serializers.ValidationError(
@@ -339,10 +391,11 @@ class TreatmentPlanSerializer(serializers.ModelSerializer):
         data,
         exclude_plan_ids,
     ):
+        product = self._resolve_plan_product(data.get("product"))
         plan_errors = collect_treatment_plan_business_errors(
             farm_id=farm_id,
             health_stat=health_stat,
-            product=data.get("product"),
+            product=product,
             start_date=data["start_date"],
             end_date=data["end_date"],
             times_per_day=data["times_per_day"],
@@ -433,14 +486,18 @@ class TreatmentEventSerializer(serializers.ModelSerializer):
                 field.read_only = True
 
     def validate_actual_dose(self, value):
+        initial = getattr(self, "initial_data", {}) or {}
+        if self.partial:
+            if initial.get("status") == TreatmentEvent.Status.SKIPPED:
+                return value
+            if "actual_dose" not in initial:
+                return value
         if value is None:
             raise serializers.ValidationError(
                 "La dosis real es obligatoria y debe ser mayor a cero."
             )
         if value <= 0:
-            raise serializers.ValidationError(
-                "La dosis real debe ser mayor a cero."
-            )
+            raise serializers.ValidationError("La dosis real debe ser mayor a cero.")
         return value
 
     def validate(self, data):
@@ -497,18 +554,22 @@ class TreatmentEventSerializer(serializers.ModelSerializer):
                     )
             return data
 
-        if "actual_dose" in data or "actual_unit" in data:
-            raise serializers.ValidationError(
-                {
-                    "actual_dose": (
-                        "Mientras el evento está programado no se aceptan dosis ni unidad "
-                        "reales. Cierre el evento con status=completed y envíe ambos campos, "
-                        "o status=skipped."
-                    )
-                }
-            )
+        # scheduled — mismo orden que FeedingEventUpdateSerializer: primero status.
+        if data.get("status") == TreatmentEvent.Status.SKIPPED:
+            data.pop("actual_dose", None)
+            data.pop("actual_unit", None)
 
         if "status" not in data:
+            if "actual_dose" in data or "actual_unit" in data:
+                raise serializers.ValidationError(
+                    {
+                        "status": (
+                            "Mientras el evento está programado no se aceptan dosis ni unidad "
+                            "reales sin cerrar el evento. Envíe status=completed con "
+                            "actual_dose y actual_unit, o status=skipped."
+                        )
+                    }
+                )
             if "notes" in data:
                 return data
             raise serializers.ValidationError(
@@ -535,11 +596,7 @@ class TreatmentEventSerializer(serializers.ModelSerializer):
         if new_status == TreatmentEvent.Status.COMPLETED:
             if "actual_dose" not in data:
                 raise serializers.ValidationError(
-                    {
-                        "actual_dose": (
-                            "Indique la dosis real al completar el evento."
-                        )
-                    }
+                    {"actual_dose": ("Indique la dosis real al completar el evento.")}
                 )
             if "actual_unit" not in data:
                 raise serializers.ValidationError(
@@ -549,6 +606,15 @@ class TreatmentEventSerializer(serializers.ModelSerializer):
                         )
                     }
                 )
+        elif "actual_dose" in data or "actual_unit" in data:
+            raise serializers.ValidationError(
+                {
+                    "status": (
+                        "Para omitir el evento envíe solo status=skipped, sin dosis ni "
+                        "unidad real."
+                    )
+                }
+            )
 
         close_errors = collect_treatment_event_close_errors(instance)
         if close_errors:
@@ -585,19 +651,13 @@ class TreatmentEventSerializer(serializers.ModelSerializer):
                     instance.actual_unit = validated_data["actual_unit"]
                 if "notes" in validated_data:
                     instance.notes = validated_data["notes"]
-                if (
-                    instance.treatment_plan.product_id
-                    and (
-                        "actual_dose" in validated_data
-                        or "actual_unit" in validated_data
-                    )
+                if instance.treatment_plan.product_id and (
+                    "actual_dose" in validated_data or "actual_unit" in validated_data
                 ):
                     try:
                         sync_treatment_inventory_for_event(instance)
                     except ValueError as exc:
-                        raise serializers.ValidationError(
-                            {"detail": str(exc)}
-                        ) from exc
+                        raise serializers.ValidationError({"detail": str(exc)}) from exc
                 instance.save()
             return instance
 
@@ -613,9 +673,7 @@ class TreatmentEventSerializer(serializers.ModelSerializer):
                     try:
                         sync_treatment_inventory_for_event(instance)
                     except ValueError as exc:
-                        raise serializers.ValidationError(
-                            {"detail": str(exc)}
-                        ) from exc
+                        raise serializers.ValidationError({"detail": str(exc)}) from exc
 
                 instance.status = new_status
                 instance.completed_at = timezone.now()
@@ -641,6 +699,8 @@ class TreatmentEventSerializer(serializers.ModelSerializer):
 
 __all__ = [
     "HealthStatSerializer",
+    "HealthStatCreateSerializer",
+    "HealthStatWithFishEvaluationCreateSerializer",
     "HealthStatUpdateSerializer",
     "TreatmentPlanSerializer",
     "TreatmentEventSerializer",

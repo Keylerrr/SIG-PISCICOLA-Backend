@@ -1,6 +1,7 @@
 # views.py
 
 from rest_framework import generics, status
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -8,12 +9,9 @@ from apps.accounts.permissions import AdminOr
 from apps.farms.permissions import CanManageCycle, IsFarmMember
 
 from .models import Harvest, HarvestClassification
-from .serializers import (
-    BatchFromClassificationSerializer,
-    HarvestClassificationSerializer,
-    HarvestDetailSerializer,
-    HarvestSerializer,
-)
+from .serializers import (BatchFromClassificationSerializer,
+                          HarvestClassificationSerializer,
+                          HarvestDetailSerializer, HarvestSerializer)
 from .utils import create_batch_from_classification
 
 
@@ -24,6 +22,25 @@ class HarvestListCreateView(generics.ListCreateAPIView):
         if self.request.method == "GET":
             return [AdminOr(IsFarmMember)()]
         return [AdminOr(CanManageCycle)()]
+
+    def get_serializer_context(self):
+        # M4: contexto único con farm_pk/farm_id y created_by para el serializer.
+        context = super().get_serializer_context()
+        context["farm_pk"] = self.kwargs["farm_pk"]
+        context["farm_id"] = self.kwargs["farm_pk"]
+        context["created_by"] = self.request.user
+        return context
+
+    def perform_create(self, serializer):
+        cycle = serializer.validated_data["cycle"]
+
+        if cycle.farm_id != self.kwargs["farm_pk"]:
+            raise ValidationError({"cycle": "El ciclo no pertenece a esta granja."})
+
+        serializer.save(
+            farm_id=self.kwargs["farm_pk"],
+            created_by=self.request.user,
+        )
 
     def get_queryset(self):
         qs = (
@@ -88,12 +105,17 @@ class BatchFromClassificationView(APIView):
 
     def post(self, request, farm_pk, harvest_pk, classification_pk):
         try:
-            classification = HarvestClassification.objects.select_related(
-                "harvest__cycle"
-            ).get(
-                pk=classification_pk,
-                harvest_id=harvest_pk,
-                farm_id=farm_pk,
+            classification = (
+                HarvestClassification.objects.select_related("harvest__cycle")
+                .prefetch_related(
+                    "sources__cycle_pond_batch__pond_batch__batch",
+                    "harvest__sources__cycle_pond_batch__pond_batch__batch",
+                )
+                .get(
+                    pk=classification_pk,
+                    harvest_id=harvest_pk,
+                    farm_id=farm_pk,
+                )
             )
         except HarvestClassification.DoesNotExist:
             return Response(

@@ -9,27 +9,22 @@ from apps.cycle.models import Cycle
 from apps.products.models import Product
 from apps.species.models import Specie, SpecieFeedingReference
 
-from .constants import (
-    FEEDING_PLAN_DATE_OVERLAP_MESSAGE,
-    FEEDING_SCHEDULE_CREATE_PARENT_MESSAGE,
-    FEEDING_SCHEDULE_PATCH_FORBIDDEN_MESSAGES,
-    FEEDING_SCHEDULE_REFERENCE_DEFAULT_FIELDS,
-    FEEDING_SCHEDULE_REFERENCE_WEIGHT_FIELDS,
-    FEEDING_SCHEDULE_SYSTEM_ASSIGNED_FIELDS,
-    FEEDING_SCHEDULE_SYSTEM_ASSIGNED_MESSAGE,
-    FEEDING_SCHEDULE_VERSION_MERGE_FIELDS,
-    FEED_SCHEDULE_PRODUCT_TYPE_NAMES,
-    MINUTES_PER_DAY,
-)
+from .constants import (FEED_SCHEDULE_PRODUCT_TYPE_NAMES,
+                        FEEDING_PLAN_DATE_OVERLAP_MESSAGE,
+                        FEEDING_SCHEDULE_CREATE_PARENT_MESSAGE,
+                        FEEDING_SCHEDULE_PATCH_FORBIDDEN_MESSAGES,
+                        FEEDING_SCHEDULE_REFERENCE_DEFAULT_FIELDS,
+                        FEEDING_SCHEDULE_REFERENCE_WEIGHT_FIELDS,
+                        FEEDING_SCHEDULE_SYSTEM_ASSIGNED_FIELDS,
+                        FEEDING_SCHEDULE_SYSTEM_ASSIGNED_MESSAGE,
+                        FEEDING_SCHEDULE_VERSION_MERGE_FIELDS, MINUTES_PER_DAY)
 from .models import FeedingEvent, FeedingPlan, FeedingSchedule
-from .utils import (
-    active_plan_date_overlap,
-    clear_feeding_inventory_for_event,
-    collect_feeding_plan_business_errors,
-    create_feeding_events_for_plan,
-    feeding_plan_lifecycle_state,
-    sync_feeding_inventory_for_event,
-)
+from .utils import (active_plan_date_overlap,
+                    clear_feeding_inventory_for_event,
+                    collect_feeding_plan_business_errors,
+                    create_feeding_events_for_plan,
+                    feeding_plan_lifecycle_state,
+                    sync_feeding_inventory_for_event)
 
 
 class FeedingScheduleSerializer(serializers.ModelSerializer):
@@ -120,9 +115,7 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
 
     def validate_times_per_day(self, value):
         if value < 1:
-            raise serializers.ValidationError(
-                "Las veces por día deben ser al menos 1."
-            )
+            raise serializers.ValidationError("Las veces por día deben ser al menos 1.")
         return value
 
     def validate_gap_between_times_per_day(self, value):
@@ -141,9 +134,7 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
 
     def validate_expected_fca(self, value):
         if value <= 0:
-            raise serializers.ValidationError(
-                "El FCA esperado debe ser mayor a 0."
-            )
+            raise serializers.ValidationError("El FCA esperado debe ser mayor a 0.")
         return value
 
     def validate_expected_daily_gain_g(self, value):
@@ -234,16 +225,15 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
                     }
                 )
             tname = (product.type_product.name or "").casefold()
-            if not any(tname == a.casefold() 
-                for a in FEED_SCHEDULE_PRODUCT_TYPE_NAMES):
-                    raise serializers.ValidationError(
-                        {
-                            "product": (
-                                "El tipo de producto debe ser de alimentación permitida "
-                                "para cronogramas."
-                            ),
-                        }
-                    )
+            if not any(tname == a.casefold() for a in FEED_SCHEDULE_PRODUCT_TYPE_NAMES):
+                raise serializers.ValidationError(
+                    {
+                        "product": (
+                            "El tipo de producto debe ser de alimentación permitida "
+                            "para cronogramas."
+                        ),
+                    }
+                )
 
         raw_specie = data.get("specie", getattr(instance, "specie_id", None))
         specie_pk = getattr(raw_specie, "pk", raw_specie)
@@ -251,9 +241,7 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
             try:
                 Specie.objects.get(pk=specie_pk)
             except Specie.DoesNotExist:
-                raise serializers.ValidationError(
-                    {"specie": "Especie no encontrada."}
-                )
+                raise serializers.ValidationError({"specie": "Especie no encontrada."})
 
         if farm_id is not None:
             if instance is None:
@@ -499,14 +487,11 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
     def _feeding_reference(specie_id, stage, feed_form):
         if specie_id is None or not stage or not feed_form:
             return None
-        return (
-            SpecieFeedingReference.objects.filter(
-                specie_id=specie_id,
-                stage=stage,
-                recommended_feed_form=feed_form,
-            )
-            .first()
-        )
+        return SpecieFeedingReference.objects.filter(
+            specie_id=specie_id,
+            stage=stage,
+            recommended_feed_form=feed_form,
+        ).first()
 
     @staticmethod
     def _reference_midpoint(lo, hi):
@@ -558,9 +543,7 @@ class FeedingScheduleSerializer(serializers.ModelSerializer):
         return out
 
     def get_recommendations(self, obj):
-        return self.reference_recommendations(
-            obj.specie_id, obj.type, obj.feed_form
-        )
+        return self.reference_recommendations(obj.specie_id, obj.type, obj.feed_form)
 
     @staticmethod
     def reference_warnings(schedule: FeedingSchedule) -> dict[str, str]:
@@ -880,9 +863,7 @@ class FeedingEventUpdateSerializer(serializers.ModelSerializer):
                 "La cantidad real es obligatoria y debe ser mayor a 0."
             )
         if value <= 0:
-            raise serializers.ValidationError(
-                "La cantidad real debe ser mayor a 0."
-            )
+            raise serializers.ValidationError("La cantidad real debe ser mayor a 0.")
         return value
 
     def validate(self, data):
@@ -922,18 +903,17 @@ class FeedingEventUpdateSerializer(serializers.ModelSerializer):
             return data
 
         # scheduled
-        if "actual_quantity" in data or "actual_unit" in data:
-            raise serializers.ValidationError(
-                {
-                    "actual_quantity": (
-                        "Mientras el evento está programado no se aceptan cantidad ni unidad "
-                        "reales. Cierre el evento con status=completed y envíe ambos campos, "
-                        "o status=skipped."
-                    )
-                }
-            )
-
         if "status" not in data:
+            if "actual_quantity" in data or "actual_unit" in data:
+                raise serializers.ValidationError(
+                    {
+                        "actual_quantity": (
+                            "Mientras el evento está programado no se aceptan cantidad ni "
+                            "unidad reales sin cerrar el evento. Indique status=completed "
+                            "con ambos campos, o status=skipped."
+                        )
+                    }
+                )
             raise serializers.ValidationError(
                 {
                     "status": (
@@ -975,6 +955,15 @@ class FeedingEventUpdateSerializer(serializers.ModelSerializer):
                         )
                     }
                 )
+        elif "actual_quantity" in data or "actual_unit" in data:
+            raise serializers.ValidationError(
+                {
+                    "actual_quantity": (
+                        "Para omitir el evento envíe solo status=skipped, sin cantidad ni "
+                        "unidad real."
+                    )
+                }
+            )
 
         return data
 
@@ -1004,13 +993,14 @@ class FeedingEventUpdateSerializer(serializers.ModelSerializer):
                     instance.actual_quantity = validated_data["actual_quantity"]
                 if "actual_unit" in validated_data:
                     instance.actual_unit = validated_data["actual_unit"]
-                if "actual_quantity" in validated_data or "actual_unit" in validated_data:
+                if (
+                    "actual_quantity" in validated_data
+                    or "actual_unit" in validated_data
+                ):
                     try:
                         sync_feeding_inventory_for_event(instance)
                     except ValueError as exc:
-                        raise serializers.ValidationError(
-                            {"detail": str(exc)}
-                        ) from exc
+                        raise serializers.ValidationError({"detail": str(exc)}) from exc
                 instance.save()
             return instance
 
@@ -1023,9 +1013,7 @@ class FeedingEventUpdateSerializer(serializers.ModelSerializer):
                 try:
                     sync_feeding_inventory_for_event(instance)
                 except ValueError as exc:
-                    raise serializers.ValidationError(
-                        {"detail": str(exc)}
-                    ) from exc
+                    raise serializers.ValidationError({"detail": str(exc)}) from exc
 
                 instance.status = new_status
                 instance.completed_at = timezone.now()

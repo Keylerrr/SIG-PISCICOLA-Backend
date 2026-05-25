@@ -1,28 +1,31 @@
-from rest_framework import serializers
 from datetime import date
-from django.db.models import Sum, Avg, Min, Max
-from django.db import transaction
 
-from .models import FishEvaluated, DailyStat, ProductUsageLog, ControlStat
-from .services import BiomassCalculator, FishEvaluatedCalculator
+from django.db import transaction
+from django.db.models import Avg, Max, Min, Sum
+from rest_framework import serializers
+
 from apps.batch.models import Batch, PondBatch
 from apps.cycle.models import Cycle
 from apps.ponds.models import Pond
 from apps.products.models import Product
-from apps.purchases.utils import create_out_movement
 from apps.purchases.models import InventoryMovement
+from apps.purchases.utils import create_out_movement
+
+from .models import ControlStat, DailyStat, FishEvaluated, ProductUsageLog
+from .services import BiomassCalculator, FishEvaluatedCalculator
 
 
 class FishEvaluatedSerializer(serializers.ModelSerializer):
     """
     Serializer para evaluaciones de peces con validaciones completas.
-    
+
     Usuario envía:
     - min_weight_g, max_weight_g: Pesos medidos en el muestreo
-    
+
     Backend calcula automáticamente:
     - avg_weight_g = (min_weight_g + max_weight_g) / 2
     """
+
     batch_id = serializers.IntegerField(write_only=True, required=False)
 
     class Meta:
@@ -61,16 +64,16 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
         # Validar que el ciclo existe y está IN_PROGRESS
         if cycle:
             if cycle.state != Cycle.State.IN_PROGRESS:
-                raise serializers.ValidationError({
-                    "cycle": "El ciclo debe estar en estado IN_PROGRESS."
-                })
+                raise serializers.ValidationError(
+                    {"cycle": "El ciclo debe estar en estado IN_PROGRESS."}
+                )
 
         # Validar que el estanque existe y está IN_USE
         if pond:
             if pond.status != Pond.Status.IN_USE:
-                raise serializers.ValidationError({
-                    "pond": "El estanque debe estar en estado IN_USE."
-                })
+                raise serializers.ValidationError(
+                    {"pond": "El estanque debe estar en estado IN_USE."}
+                )
 
         # Validar que el estanque está asociado al ciclo
         if cycle and pond:
@@ -79,15 +82,17 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
                 pond_batch__cycle_pond_batches__cycle=cycle,
             ).exists()
             if not cpb_exists:
-                raise serializers.ValidationError({
-                    "pond": "El estanque no está asociado a este ciclo."
-                })
+                raise serializers.ValidationError(
+                    {"pond": "El estanque no está asociado a este ciclo."}
+                )
 
         # Validar cantidad muestreada > 0
         if sampled_quantity is not None and sampled_quantity <= 0:
-            raise serializers.ValidationError({
-                "sampled_quantity": "La cantidad de peces evaluados debe ser mayor a 0."
-            })
+            raise serializers.ValidationError(
+                {
+                    "sampled_quantity": "La cantidad de peces evaluados debe ser mayor a 0."
+                }
+            )
 
         # Validar mortalidad <= muestra
         if (
@@ -95,40 +100,42 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
             and mortality_quantity is not None
             and mortality_quantity > sampled_quantity
         ):
-            raise serializers.ValidationError({
-                "mortality_quantity": "La mortalidad no puede ser mayor a la cantidad muestreada."
-            })
+            raise serializers.ValidationError(
+                {
+                    "mortality_quantity": "La mortalidad no puede ser mayor a la cantidad muestreada."
+                }
+            )
 
         # Validar que la fecha de evaluación <= hoy
         if evaluation_date and evaluation_date > date.today():
-            raise serializers.ValidationError({
-                "evaluation_date": "La fecha de evaluación no puede ser futura."
-            })
+            raise serializers.ValidationError(
+                {"evaluation_date": "La fecha de evaluación no puede ser futura."}
+            )
 
         # Si se especifica batch_id y mortalidad es 100%, es válido (cambiar a DEAD)
         # Si se especifica batch_id pero mortalidad < 100%, se descuenta solo de ese batch
         # Si NO se especifica batch_id, se descuenta proporcionalmente de todos
         if batch_id:
             if not Batch.objects.filter(id=batch_id).exists():
-                raise serializers.ValidationError({
-                    "batch_id": "El batch especificado no existe."
-                })
+                raise serializers.ValidationError(
+                    {"batch_id": "El batch especificado no existe."}
+                )
 
         return data
 
     def create(self, validated_data):
         """
         Crea FishEvaluated calculando avg_weight_g automáticamente.
-        
+
         avg_weight_g = (min_weight_g + max_weight_g) / 2
         """
         batch_id = validated_data.pop("batch_id", None)
-        
+
         # Calcular avg_weight_g automáticamente
         min_weight = validated_data.get("min_weight_g", 0)
         max_weight = validated_data.get("max_weight_g", 0)
         validated_data["avg_weight_g"] = (min_weight + max_weight) / 2
-        
+
         # Obtener cycle y pond desde validated_data
         # Si vienen como IDs, resolverlos
         if "cycle_id" in validated_data and "cycle" not in validated_data:
@@ -136,31 +143,38 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
             validated_data["cycle"] = cycle
         else:
             cycle = validated_data.get("cycle")
-        
+
         if "pond_id" in validated_data and "pond" not in validated_data:
             pond = Pond.objects.get(id=validated_data.pop("pond_id"))
             validated_data["pond"] = pond
         else:
             pond = validated_data.get("pond")
-        
+
+        if cycle is not None and validated_data.get("farm") is None:
+            validated_data["farm"] = cycle.farm
+        elif pond is not None and validated_data.get("farm") is None:
+            validated_data["farm"] = pond.farm
+
         evaluation_date = validated_data.get("evaluation_date")
         mortality_quantity = validated_data.get("mortality_quantity", 0)
         sampled_quantity = validated_data.get("sampled_quantity", 0)
-        
+
         # Crear la evaluación
         fish_evaluated = super().create(validated_data)
-        
+
         # Descontar mortalidad
         if mortality_quantity > 0:
             if batch_id:
                 # Mortalidad específica: descontar solo del batch especificado
-                pond_batch = PondBatch.objects.filter(batch_id=batch_id, pond=pond).first()
+                pond_batch = PondBatch.objects.filter(
+                    batch_id=batch_id, pond=pond
+                ).first()
                 if pond_batch:
                     pond_batch.current_quantity -= mortality_quantity
                     if pond_batch.current_quantity < 0:
                         pond_batch.current_quantity = 0
                     pond_batch.save(update_fields=["current_quantity"])
-                
+
                 # Si es 100% de mortalidad, cambiar a DEAD
                 if sampled_quantity > 0 and mortality_quantity == sampled_quantity:
                     batch = Batch.objects.get(id=batch_id)
@@ -169,36 +183,38 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
             else:
                 # Mortalidad general: descontar proporcionalmente de todos los batches del estanque
                 pond_batches = PondBatch.objects.filter(
-                    pond=pond,
-                    end_date__isnull=True
+                    pond=pond, end_date__isnull=True
                 ).select_related("batch")
-                
-                total_quantity = pond_batches.aggregate(total=Sum("current_quantity"))["total"] or 0
-                
+
+                total_quantity = (
+                    pond_batches.aggregate(total=Sum("current_quantity"))["total"] or 0
+                )
+
                 if total_quantity > 0:
                     # Descontar proporcionalmente
                     for pond_batch in pond_batches:
                         proportion = pond_batch.current_quantity / total_quantity
                         quantity_to_reduce = int(mortality_quantity * proportion)
-                        
+
                         pond_batch.current_quantity -= quantity_to_reduce
                         if pond_batch.current_quantity < 0:
                             pond_batch.current_quantity = 0
                         pond_batch.save(update_fields=["current_quantity"])
-        
+
         # Verificar si todos los batches del estanque están DEAD
         all_pond_batches = PondBatch.objects.filter(
-            pond=pond,
-            end_date__isnull=True
+            pond=pond, end_date__isnull=True
         ).select_related("batch")
-        
-        all_dead = all_pond_batches.exclude(batch__status=Batch.Status.DEAD).count() == 0
-        
+
+        all_dead = (
+            all_pond_batches.exclude(batch__status=Batch.Status.DEAD).count() == 0
+        )
+
         if all_dead and all_pond_batches.exists():
             # Si todos los batches del estanque están muertos, cancelar el ciclo
             cycle.state = Cycle.State.CANCELLED
             cycle.save(update_fields=["state"])
-        
+
         # ========== GENERAR CONTROL STAT AUTOMÁTICAMENTE ==========
         evaluation_date = fish_evaluated.evaluation_date
 
@@ -235,7 +251,6 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
                 end_date=evaluation_date,
             )
             fca = BiomassCalculator.calculate_fca(float(alimento_kg), biomass_gain_kg)
-        
         # Crear o actualizar ControlStat del día usando solo el registro actual
         control_stat, created = ControlStat.objects.update_or_create(
             cycle=cycle,
@@ -252,9 +267,9 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
                 "biomass_kg": biomass_kg,
                 "biomass_gain_kg": biomass_gain_kg,
                 "fca": fca,
-            }
+            },
         )
-        
+
         return fish_evaluated
 
 
@@ -288,35 +303,39 @@ class ProductUsageLogSerializer(serializers.ModelSerializer):
         # ProductUsageLog SIEMPRE debe estar ligado a un DailyStat
         # Se valida aquí para evitar creaciones independientes
         if not daily_stat:
-            raise serializers.ValidationError({
-                "daily_stat": "ProductUsageLog NO se crea independientemente. Crea product_usages EN CONJUNTO al crear DailyStat en la misma solicitud POST."
-            })
+            raise serializers.ValidationError(
+                {
+                    "daily_stat": "ProductUsageLog NO se crea independientemente. Crea product_usages EN CONJUNTO al crear DailyStat en la misma solicitud POST."
+                }
+            )
 
         # Validar cantidad > 0
         if quantity_used is not None and quantity_used <= 0:
-            raise serializers.ValidationError({
-                "quantity_used": "La cantidad usada debe ser mayor a 0."
-            })
+            raise serializers.ValidationError(
+                {"quantity_used": "La cantidad usada debe ser mayor a 0."}
+            )
 
         # Validar que el producto pertenece a la misma farm
         if daily_stat and product:
             if product.farm_id != daily_stat.cycle.farm_id:
-                raise serializers.ValidationError({
-                    "product": "El producto debe pertenecer a la misma granja que el ciclo."
-                })
+                raise serializers.ValidationError(
+                    {
+                        "product": "El producto debe pertenecer a la misma granja que el ciclo."
+                    }
+                )
 
         # Validar que el batch pertenece a la misma farm
         if daily_stat and batch:
             if batch.farm_id != daily_stat.cycle.farm_id:
-                raise serializers.ValidationError({
-                    "batch": "El lote debe pertenecer a la misma granja que el ciclo."
-                })
+                raise serializers.ValidationError(
+                    {"batch": "El lote debe pertenecer a la misma granja que el ciclo."}
+                )
 
         # Validar que el batch está ACTIVE
         if batch and batch.status != Batch.Status.ACTIVE:
-            raise serializers.ValidationError({
-                "batch": "El lote debe estar en estado ACTIVE."
-            })
+            raise serializers.ValidationError(
+                {"batch": "El lote debe estar en estado ACTIVE."}
+            )
 
         return data
 
@@ -325,6 +344,7 @@ class DailyStatSerializer(serializers.ModelSerializer):
     """
     Serializer para estadísticas diarias con soporte para crear ProductUsageLog anidados.
     """
+
     product_usages = ProductUsageLogSerializer(
         many=True, write_only=True, required=False
     )
@@ -354,16 +374,16 @@ class DailyStatSerializer(serializers.ModelSerializer):
         # Validar que el ciclo está IN_PROGRESS
         if cycle:
             if cycle.state != Cycle.State.IN_PROGRESS:
-                raise serializers.ValidationError({
-                    "cycle": "El ciclo debe estar en estado IN_PROGRESS."
-                })
+                raise serializers.ValidationError(
+                    {"cycle": "El ciclo debe estar en estado IN_PROGRESS."}
+                )
 
         # Validar que el estanque está IN_USE
         if pond:
             if pond.status != Pond.Status.IN_USE:
-                raise serializers.ValidationError({
-                    "pond": "El estanque debe estar en estado IN_USE."
-                })
+                raise serializers.ValidationError(
+                    {"pond": "El estanque debe estar en estado IN_USE."}
+                )
 
         # Validar que el estanque está asociado al ciclo
         if cycle and pond:
@@ -372,15 +392,15 @@ class DailyStatSerializer(serializers.ModelSerializer):
                 pond_batch__cycle_pond_batches__cycle=cycle,
             ).exists()
             if not cpb_exists:
-                raise serializers.ValidationError({
-                    "pond": "El estanque no está asociado a este ciclo."
-                })
+                raise serializers.ValidationError(
+                    {"pond": "El estanque no está asociado a este ciclo."}
+                )
 
         # Validar que la fecha <= hoy
         if stat_date and stat_date > date.today():
-            raise serializers.ValidationError({
-                "stat_date": "La fecha del stat no puede ser futura."
-            })
+            raise serializers.ValidationError(
+                {"stat_date": "La fecha del stat no puede ser futura."}
+            )
 
         return data
 
@@ -388,14 +408,14 @@ class DailyStatSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """
         Crea DailyStat con ProductUsageLogs anidados de forma ATÓMICA.
-        
+
         Flujo:
         1. Crea el DailyStat
         2. Para cada product_usage:
            - Crea ProductUsageLog
            - Llama create_out_movement() para descontar del inventario
         3. Si algún paso falla, revierte TODO (incluyendo el DailyStat)
-        
+
         El descuento de inventario se registra en InventoryMovement con tipo OUT.
         """
         product_usages_data = validated_data.pop("product_usages", [])
@@ -425,9 +445,7 @@ class DailyStatSerializer(serializers.ModelSerializer):
         except ValueError as e:
             # ValueError se lanza si no hay stock suficiente
             # La transacción @transaction.atomic revierte automáticamente
-            raise serializers.ValidationError({
-                "product_usages": str(e)
-            })
+            raise serializers.ValidationError({"product_usages": str(e)})
 
         return daily_stat
 
@@ -435,10 +453,10 @@ class DailyStatSerializer(serializers.ModelSerializer):
 class ControlStatSerializer(serializers.ModelSerializer):
     """
     Serializer para estadísticas de control (READ-ONLY).
-    
+
     ControlStat se genera AUTOMÁTICAMENTE cada vez que se crea un FishEvaluated.
     El frontend NO crea ControlStat manualmente.
-    
+
     control_date es read-only y se asigna como evaluation_date del FishEvaluated.
     """
 
@@ -488,16 +506,16 @@ class ControlStatSerializer(serializers.ModelSerializer):
         # Validar que el ciclo está IN_PROGRESS
         if cycle:
             if cycle.state != Cycle.State.IN_PROGRESS:
-                raise serializers.ValidationError({
-                    "cycle": "El ciclo debe estar en estado IN_PROGRESS."
-                })
+                raise serializers.ValidationError(
+                    {"cycle": "El ciclo debe estar en estado IN_PROGRESS."}
+                )
 
         # Validar que el estanque está IN_USE
         if pond:
             if pond.status != Pond.Status.IN_USE:
-                raise serializers.ValidationError({
-                    "pond": "El estanque debe estar en estado IN_USE."
-                })
+                raise serializers.ValidationError(
+                    {"pond": "El estanque debe estar en estado IN_USE."}
+                )
 
         # Validar que el estanque está asociado al ciclo
         if cycle and pond:
@@ -506,9 +524,9 @@ class ControlStatSerializer(serializers.ModelSerializer):
                 pond_batch__cycle_pond_batches__cycle=cycle,
             ).exists()
             if not cpb_exists:
-                raise serializers.ValidationError({
-                    "pond": "El estanque no está asociado a este ciclo."
-                })
+                raise serializers.ValidationError(
+                    {"pond": "El estanque no está asociado a este ciclo."}
+                )
 
         # Validar que debe existir al menos 1 FishEvaluated previo
         if cycle and pond and control_date:
@@ -519,15 +537,17 @@ class ControlStatSerializer(serializers.ModelSerializer):
                 deleted_at__isnull=True,
             )
             if not fish_evals.exists():
-                raise serializers.ValidationError({
-                    "control_date": "Debe existir al menos una evaluación de peces previa a la fecha de control."
-                })
+                raise serializers.ValidationError(
+                    {
+                        "control_date": "Debe existir al menos una evaluación de peces previa a la fecha de control."
+                    }
+                )
 
         # Validar que control_date <= hoy
         if control_date and control_date > date.today():
-            raise serializers.ValidationError({
-                "control_date": "La fecha del control no puede ser futura."
-            })
+            raise serializers.ValidationError(
+                {"control_date": "La fecha del control no puede ser futura."}
+            )
 
         return data
 

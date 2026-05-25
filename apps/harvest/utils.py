@@ -7,6 +7,10 @@ from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 
+from apps.batch.services.stock import create_pond_batch
+from apps.core.services.alerts import resolve_alerts
+from apps.cycle.services.lifecycle import finish_cycle
+
 from .models import (Harvest, HarvestClassification,
                      HarvestClassificationDerivation,
                      HarvestClassificationSource, HarvestSource)
@@ -217,37 +221,43 @@ def _validate_harvest(cycle, harvest_type, total_fish_count):
 
 
 def _check_active_treatment(cycle):
-    TreatmentPlan = apps.get_model("events", "TreatmentPlan")
+    # A1: TreatmentPlan vive en apps.health, no en events.
+    try:
+        TreatmentPlan = apps.get_model("health", "TreatmentPlan")
+    except LookupError:
+        return False
     return TreatmentPlan.objects.filter(
-        cycle=cycle,
-        status=TreatmentPlan.Status.PROGRESS,
+        health_stat__cycle=cycle,
+        status=TreatmentPlan.Status.IN_PROGRESS,
     ).exists()
 
 
 def _cancel_scheduled_events(cycle):
-    FeedingEvent = apps.get_model("feeding", "FeedingEvent")
-    TreatmentEvent = apps.get_model("events", "TreatmentEvent")
+    try:
+        FeedingEvent = apps.get_model("feeding", "FeedingEvent")
+    except LookupError:
+        FeedingEvent = None
 
-    FeedingEvent.objects.filter(
-        cycle=cycle,
-        status=FeedingEvent.Status.SCHEDULED,
-    ).delete()
+    if FeedingEvent is not None:
+        FeedingEvent.objects.filter(
+            cycle=cycle,
+            status=FeedingEvent.Status.SCHEDULED,
+        ).delete()
 
-    TreatmentEvent.objects.filter(
-        treatment_plan__cycle=cycle,
-        status=TreatmentEvent.Status.SCHEDULED,
-    ).delete()
+    try:
+        TreatmentEvent = apps.get_model("health", "TreatmentEvent")
+    except LookupError:
+        TreatmentEvent = None
+
+    if TreatmentEvent is not None:
+        TreatmentEvent.objects.filter(
+            cycle=cycle,
+            status=TreatmentEvent.Status.SCHEDULED,
+        ).delete()
 
 
 def _resolve_cycle_alerts(cycle):
-    Alert = apps.get_model("core", "Alert")
-    Alert.objects.filter(
-        cycle=cycle,
-        is_resolved=False,
-    ).update(
-        is_resolved=True,
-        resolved_at=timezone.now(),
-    )
+    resolve_alerts(cycle=cycle)
 
 
 def _validate_cycle_finish_date(cycle, finish_date) -> None:
@@ -498,6 +508,16 @@ def confirm_harvest(
     if not cycle_pond_batches:
         raise ValueError("No hay lotes activos con stock en este ciclo.")
 
+    # A6: revalidar stock con filas bloqueadas (cierra ventana TOCTOU del serializer).
+    available_locked = sum(
+        cpb.pond_batch.current_quantity for cpb in cycle_pond_batches
+    )
+    if harvest.total_fish_count > available_locked:
+        raise ValueError(
+            f"La cantidad a cosechar ({harvest.total_fish_count}) excede "
+            f"la disponible ({available_locked})."
+        )
+
     allocations = _build_harvest_allocations(
         cycle_pond_batches,
         harvest.total_fish_count,
@@ -515,13 +535,10 @@ def confirm_harvest(
     if classifications_data is not None:
         build_classification_sources(harvest, classifications_data)
 
-    should_close = harvest.type == Harvest.Type.TOTAL and _is_cycle_fully_harvested(
-        cycle
-    )
+    should_close = _is_cycle_fully_harvested(cycle)
     if should_close:
-        _cancel_scheduled_events(cycle)
-        _resolve_cycle_alerts(cycle)
-        finish_cycle_from_harvest(cycle, harvest.date)
+        # Cierre centralizado: finish_cycle incluye ponds, eventos (A2 en lifecycle) y alertas.
+        finish_cycle(cycle, harvest.date)
 
 
 def _create_batch_sources_for_derivation(
@@ -585,7 +602,7 @@ def _upsert_batch_source(parent_batch, child_batch, quantity: int):
 @transaction.atomic
 def create_batch_from_classification(
     classification: HarvestClassification,
-    specie_id: int,
+    specie_id: int | None,
     biological_state: str,
     min_weight_g: float,
     avg_weight_g: float,
@@ -614,6 +631,9 @@ def create_batch_from_classification(
             f"en la clasificación ({available})."
         )
 
+    if specie_id is None:
+        specie_id = infer_specie_id_for_classification(classification)
+
     farm = classification.farm
     timestamp = int(timezone.now().timestamp())
     code = f"BATCH-{farm.id}-{timestamp}"
@@ -638,11 +658,13 @@ def create_batch_from_classification(
         comments=comments,
     )
 
-    PondBatch.objects.create(
-        pond_id=pond_id,
+    Pond = apps.get_model("ponds", "Pond")
+    pond = Pond.objects.get(pk=pond_id)
+
+    create_pond_batch(
+        pond=pond,
         batch=batch,
         initial_quantity=fish_count,
-        current_quantity=fish_count,
         start_date=timezone.now().date(),
     )
 
@@ -684,3 +706,112 @@ def get_cycle_weights(cycle) -> dict:
         "avg_weight_g": last_control.avg_weight_g,
         "max_weight_g": last_control.max_weight_g,
     }
+
+
+def get_last_control_stat_for_cycle(cycle):
+    """
+    Último ControlStat del ciclo (misma consulta base que get_cycle_weights).
+
+    Fuente: monitoring.ControlStat filtrado por cycle_id, deleted_at IS NULL,
+    orden -control_date. Un ciclo tiene un único pond (Cycle.pond); los controles
+    se registran por (cycle, pond).
+    """
+    ControlStat = apps.get_model("monitoring", "ControlStat")
+    return (
+        ControlStat.objects.filter(
+            cycle=cycle,
+            deleted_at__isnull=True,
+        )
+        .order_by("-control_date")
+        .first()
+    )
+
+
+def infer_total_fish_count(cycle) -> int:
+    """
+    Stock vivo operativo del ciclo: suma de PondBatch.current_quantity vinculados
+    al ciclo con end_date NULL y current_quantity > 0 (véase _get_available_quantity).
+    """
+    available = _get_available_quantity(cycle)
+    if available <= 0:
+        raise ValueError("No hay stock vivo disponible en los lotes activos del ciclo.")
+    return available
+
+
+def infer_total_weight_g(cycle, total_fish_count: int) -> Decimal:
+    """
+    total_fish_count × avg_weight_g del último ControlStat del ciclo.
+
+    Política existente (get_cycle_weights): sin ControlStat, avg_weight_g = 0.0
+    → peso total 0 (no se inventa peso).
+    """
+    weights = get_cycle_weights(cycle)
+    avg_weight_g = Decimal(str(weights["avg_weight_g"]))
+    total = Decimal(total_fish_count) * avg_weight_g
+    return total.quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+
+
+def infer_harvest_type(cycle, total_fish_count: int) -> str:
+    """
+    Total si la cosecha iguala o supera el stock vivo disponible; si no, Partial.
+
+    Usa la misma definición de disponible que confirm_harvest (_get_available_quantity).
+    """
+    available = _get_available_quantity(cycle)
+    if total_fish_count >= available:
+        return Harvest.Type.TOTAL
+    return Harvest.Type.PARTIAL
+
+
+def _collect_parent_biological_states(classification) -> list[str]:
+    """
+    Estados biológicos de lotes padre según trazabilidad de la clasificación.
+
+    Prioridad (alineada con _create_batch_sources_for_derivation):
+    1. HarvestClassificationSource
+    2. HarvestSource del harvest
+    """
+    states = []
+
+    class_sources = HarvestClassificationSource.objects.filter(
+        classification=classification,
+    ).select_related("cycle_pond_batch__pond_batch__batch")
+    for source in class_sources:
+        if source.fish_count <= 0:
+            continue
+        states.append(source.cycle_pond_batch.pond_batch.batch.biological_state)
+
+    if states:
+        return states
+
+    harvest_sources = HarvestSource.objects.filter(
+        harvest_id=classification.harvest_id,
+    ).select_related("cycle_pond_batch__pond_batch__batch")
+    for source in harvest_sources:
+        if source.fish_count <= 0:
+            continue
+        states.append(source.cycle_pond_batch.pond_batch.batch.biological_state)
+
+    return states
+
+
+def infer_specie_id_for_classification(classification) -> int:
+    """Especie del ciclo de la cosecha (Harvest → Cycle.specie_id)."""
+    return classification.harvest.cycle.specie_id
+
+
+def infer_biological_state_for_classification(classification) -> str | None:
+    """
+    Infiere biological_state solo si todas las fuentes con peces comparten el mismo
+    Batch.BiologicalState (coherente con CyclePondBatchSerializer: un ciclo exige
+    una sola etapa biológica entre sus lotes).
+
+    Si hay cero fuentes o más de un estado distinto → None (el cliente debe enviar el campo).
+    """
+    states = _collect_parent_biological_states(classification)
+    if not states:
+        return None
+    unique = set(states)
+    if len(unique) == 1:
+        return unique.pop()
+    return None

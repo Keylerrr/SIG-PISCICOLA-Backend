@@ -1,16 +1,13 @@
 from django.urls import path
 
-from .views import (
-    CycleHealthStatDetailView,
-    CycleHealthStatListCreateView,
-    CycleTreatmentEventListView,
-    HealthOptionsView,
-    HealthStatTreatmentPlanDetailView,
-    HealthStatTreatmentPlanEventDetailView,
-    HealthStatTreatmentPlanEventListView,
-    HealthStatTreatmentPlanListCreateView,
-    TreatmentPlanOccupiedRangesView,
-)
+from .views import (CycleHealthStatDetailView, CycleHealthStatListCreateView,
+                    CycleHealthStatWithFishEvaluationCreateView,
+                    CycleTreatmentEventListView, HealthOptionsView,
+                    HealthStatTreatmentPlanDetailView,
+                    HealthStatTreatmentPlanEventDetailView,
+                    HealthStatTreatmentPlanEventListView,
+                    HealthStatTreatmentPlanListCreateView,
+                    TreatmentPlanOccupiedRangesView)
 
 urlpatterns = [
     path(
@@ -22,6 +19,11 @@ urlpatterns = [
         "farms/<int:farm_pk>/ponds/<int:pond_pk>/cycles/<int:cycle_pk>/health-stats/",
         CycleHealthStatListCreateView.as_view(),
         name="health-stat-list",
+    ),
+    path(
+        "farms/<int:farm_pk>/ponds/<int:pond_pk>/cycles/<int:cycle_pk>/health-stats/with-fish-evaluation/",
+        CycleHealthStatWithFishEvaluationCreateView.as_view(),
+        name="health-stat-with-fish-evaluation",
     ),
     path(
         "farms/<int:farm_pk>/ponds/<int:pond_pk>/cycles/<int:cycle_pk>/health-stats/<int:health_stat_id>/",

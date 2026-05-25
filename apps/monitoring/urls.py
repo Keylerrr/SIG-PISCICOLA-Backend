@@ -1,10 +1,6 @@
 from django.urls import path
 
-from .views import (
-    FishEvaluatedViewSet,
-    DailyStatViewSet,
-    ControlStatViewSet,
-)
+from .views import ControlStatViewSet, DailyStatViewSet, FishEvaluatedViewSet
 
 urlpatterns = [
     # Fish Evaluations

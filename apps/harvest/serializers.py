@@ -13,8 +13,11 @@ from .utils import (_check_active_treatment, _get_available_quantity,
                     _validate_harvest, confirm_harvest,
                     get_classification_available_fish_count,
                     get_classification_derived_fish_count, get_cycle_weights,
+                    infer_biological_state_for_classification,
+                    infer_harvest_type, infer_specie_id_for_classification,
+                    infer_total_fish_count, infer_total_weight_g,
                     validate_exact_classification_sources)
-from .validators import (validate_pond_for_derivation,
+from .validators import (decimal_weights_equal, validate_pond_for_derivation,
                          validate_specie_for_derivation)
 
 
@@ -145,6 +148,13 @@ class HarvestSerializer(serializers.ModelSerializer):
     sources = HarvestSourceSerializer(many=True, read_only=True)
     has_active_treatment = serializers.SerializerMethodField()
 
+    # Opcionales en request: se autocompletan en validate() si el cliente no los envía.
+    total_fish_count = serializers.IntegerField(required=False, min_value=1)
+    total_weight_g = serializers.DecimalField(
+        max_digits=14, decimal_places=2, required=False
+    )
+    type = serializers.ChoiceField(choices=Harvest.Type.choices, required=False)
+
     min_weight_g = serializers.DecimalField(
         max_digits=8, decimal_places=2, read_only=True
     )
@@ -191,6 +201,12 @@ class HarvestSerializer(serializers.ModelSerializer):
     def get_has_active_treatment(self, obj):
         return _check_active_treatment(obj.cycle)
 
+    def _request_provided(self, field_name: str) -> bool:
+        initial = getattr(self, "initial_data", None)
+        if initial is None:
+            return False
+        return field_name in initial
+
     def validate_date(self, value):
         if value > timezone.now().date():
             raise serializers.ValidationError(
@@ -200,9 +216,9 @@ class HarvestSerializer(serializers.ModelSerializer):
 
     def validate(self, data):
         cycle = data.get("cycle")
-        harvest_type = data.get("type")
-        total_fish_count = data.get("total_fish_count")
-        total_weight_g = data.get("total_weight_g")
+        if cycle is None:
+            return data
+
         date = data.get("date")
         classifications = data.get("classifications", [])
         traceability_mode = data.get(
@@ -210,11 +226,67 @@ class HarvestSerializer(serializers.ModelSerializer):
             Harvest.TraceabilityMode.PROPORTIONAL,
         )
 
+        # Autocompletado (solo si el cliente no envió el campo en el JSON).
+        if not self._request_provided("total_fish_count"):
+            try:
+                data["total_fish_count"] = infer_total_fish_count(cycle)
+            except ValueError as exc:
+                raise serializers.ValidationError(
+                    {"total_fish_count": str(exc)}
+                ) from exc
+
+        total_fish_count = data["total_fish_count"]
+        if total_fish_count is None:
+            raise serializers.ValidationError(
+                {"total_fish_count": "Este campo es obligatorio."}
+            )
+
+        if not self._request_provided("type"):
+            data["type"] = infer_harvest_type(cycle, total_fish_count)
+
+        if not self._request_provided("total_weight_g"):
+            data["total_weight_g"] = infer_total_weight_g(cycle, total_fish_count)
+
+        harvest_type = data.get("type")
+        total_weight_g = data.get("total_weight_g")
+
+        if harvest_type is None:
+            raise serializers.ValidationError({"type": "Este campo es obligatorio."})
+        if total_weight_g is None:
+            raise serializers.ValidationError(
+                {"total_weight_g": "Este campo es obligatorio."}
+            )
+
+        farm_pk = self.context.get("farm_pk")
+        if cycle and farm_pk is not None and cycle.farm_id != farm_pk:
+            raise serializers.ValidationError(
+                {"cycle": "El ciclo no pertenece a esta granja."}
+            )
+
         if date and cycle and date < cycle.start_date:
             raise serializers.ValidationError(
                 {
                     "date": "La fecha de cosecha no puede ser anterior al inicio del ciclo."
                 }
+            )
+
+        # Si la cosecha agota el stock del ciclo, la fecha debe permitir finish_cycle.
+        if date and cycle and total_fish_count is not None:
+            available = _get_available_quantity(cycle)
+            if total_fish_count >= available and date > cycle.estimated_finish_date:
+                raise serializers.ValidationError(
+                    {
+                        "date": (
+                            "La fecha de cosecha no puede ser posterior a la fecha estimada "
+                            f"del ciclo ({cycle.estimated_finish_date}) cuando agota el stock."
+                        )
+                    }
+                )
+
+        farm_id = self.context.get("farm_id")
+        if farm_id and cycle and cycle.farm_id != int(farm_id):
+            raise serializers.ValidationError(
+                {"cycle": "El ciclo seleccionado no pertenece a la granja indicada."}
             )
 
         errors = _validate_harvest(cycle, harvest_type, total_fish_count)
@@ -261,10 +333,39 @@ class HarvestSerializer(serializers.ModelSerializer):
             )
 
         categories = [c["size_category"] for c in classifications]
-        if len(categories) != len(set(categories)):
-            raise serializers.ValidationError(
-                {"classifications": "No puede haber categorías de tamaño duplicadas."}
-            )
+
+        if traceability_mode == Harvest.TraceabilityMode.EXACT:
+            if total_classified_fish != total_fish_count:
+                raise serializers.ValidationError(
+                    {
+                        "classifications": (
+                            "En modo exacto, la suma de peces clasificados debe ser igual "
+                            "al total cosechado."
+                        )
+                    }
+                )
+            if not decimal_weights_equal(total_classified_weight, total_weight_g):
+                raise serializers.ValidationError(
+                    {
+                        "classifications": (
+                            "En modo exacto, la suma de peso clasificado debe ser igual "
+                            "al peso total cosechado."
+                        )
+                    }
+                )
+        else:
+            # En modo proporcional se permite que las clasificaciones cubran solo una parte
+            # de la cosecha; la cosecha total se persiste y la trazabilidad del remanente
+            # queda explícitamente disponible a nivel de HarvestSource.
+            for classification in classifications:
+                if classification.get("sources"):
+                    raise serializers.ValidationError(
+                        {
+                            "classifications": (
+                                "sources solo se permiten con traceability_mode=exact."
+                            )
+                        }
+                    )
 
         if traceability_mode == Harvest.TraceabilityMode.EXACT:
             try:
@@ -286,6 +387,10 @@ class HarvestSerializer(serializers.ModelSerializer):
                             )
                         }
                     )
+        if len(categories) != len(set(categories)):
+            raise serializers.ValidationError(
+                {"classifications": "No puede haber categorías de tamaño duplicadas."}
+            )
 
         return data
 
@@ -293,6 +398,14 @@ class HarvestSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         classifications_data = validated_data.pop("classifications")
         cycle = validated_data["cycle"]
+
+        farm_id = self.context.get("farm_id")
+        if farm_id:
+            validated_data["farm_id"] = farm_id
+
+        created_by = self.context.get("created_by")
+        if created_by:
+            validated_data["created_by"] = created_by
 
         weights = get_cycle_weights(cycle)
 
@@ -342,8 +455,10 @@ class HarvestDetailSerializer(HarvestSerializer):
 
 
 class BatchFromClassificationSerializer(serializers.Serializer):
-    specie_id = serializers.IntegerField()
-    biological_state = serializers.ChoiceField(choices=Batch.BiologicalState.choices)
+    specie_id = serializers.IntegerField(required=False)
+    biological_state = serializers.ChoiceField(
+        choices=Batch.BiologicalState.choices, required=False
+    )
     pond_id = serializers.IntegerField()
     fish_count = serializers.IntegerField(required=False, min_value=1)
     comments = serializers.CharField(required=False, allow_blank=True, default="")
@@ -351,6 +466,12 @@ class BatchFromClassificationSerializer(serializers.Serializer):
     min_weight_g = serializers.FloatField(required=False)
     avg_weight_g = serializers.FloatField(required=False)
     max_weight_g = serializers.FloatField(required=False)
+
+    def _request_provided(self, field_name: str) -> bool:
+        initial = getattr(self, "initial_data", None)
+        if initial is None:
+            return False
+        return field_name in initial
 
     def validate(self, data):
         classification = self.context.get("classification")
@@ -360,6 +481,23 @@ class BatchFromClassificationSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 "Contexto de validación incompleto (classification, farm_id)."
             )
+
+        if not self._request_provided("biological_state"):
+            inferred = infer_biological_state_for_classification(classification)
+            if inferred is None:
+                raise serializers.ValidationError(
+                    {
+                        "biological_state": (
+                            "No se puede inferir desde las fuentes de trazabilidad "
+                            "(HarvestClassificationSource o HarvestSource). "
+                            "Envíe biological_state manualmente."
+                        )
+                    }
+                )
+            data["biological_state"] = inferred
+
+        if not self._request_provided("specie_id"):
+            data["specie_id"] = infer_specie_id_for_classification(classification)
 
         validate_pond_for_derivation(farm_id=farm_id, pond_id=data["pond_id"])
         validate_specie_for_derivation(

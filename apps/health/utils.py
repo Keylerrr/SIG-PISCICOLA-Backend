@@ -3,20 +3,21 @@ from __future__ import annotations
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
 from apps.cycle.models import Cycle, CyclePondBatch
 from apps.farms.models import Farm
 from apps.feeding.utils import quantity_in_product_unit
-from apps.monitoring.models import FishEvaluated
+from apps.monitoring.models import ControlStat, FishEvaluated
 from apps.monitoring.serializers import FishEvaluatedSerializer
 from apps.ponds.models import Pond
 from apps.purchases.models import InventoryMovement
 from apps.purchases.utils import create_out_movement
 
-from .constants import FISH_EVALUATED_TYPE_HEALTH_STAT
+from .constants import (FISH_EVALUATED_TYPE_HEALTH_STAT,
+                        TREATMENT_PLAN_PRODUCT_TYPE_NAMES)
 from .models import HealthStat, TreatmentEvent, TreatmentPlan
 
 HEALTH_STAT_DELETE_HAS_PLANS_MESSAGE = (
@@ -176,6 +177,8 @@ def build_fish_evaluated_payload(
         "evaluation_date": eval_date,
         "sampled_quantity": fish["sampled_quantity"],
         "mortality_quantity": fish.get("mortality_quantity", 0),
+        "min_weight_g": fish["min_weight_g"],
+        "max_weight_g": fish["max_weight_g"],
         "observations": fish.get("observations"),
         "type": FISH_EVALUATED_TYPE_HEALTH_STAT,
     }
@@ -192,15 +195,20 @@ def is_combined_health_stat_payload(data: dict) -> bool:
 
 
 def pop_fish_evaluation_fields(data: dict) -> tuple[dict, dict | None]:
-    """Separa campos de evaluación de peces del resto del body del HealthStat."""
+    """
+    Quita del body los campos write-only de evaluación de peces.
+
+    Si el POST incluye ``sampled_quantity`` (formulario combinado), devuelve
+    esos campos en ``fish``; si no, los descarta para no pasarlos a HealthStat.
+    """
     from .constants import FISH_EVALUATION_CREATE_FIELDS
 
-    if not is_combined_health_stat_payload(data):
-        return data, None
     fish = {}
     for key in FISH_EVALUATION_CREATE_FIELDS:
         if key in data:
             fish[key] = data.pop(key)
+    if "sampled_quantity" not in fish:
+        return data, None
     return data, fish
 
 
@@ -234,6 +242,37 @@ def validate_fish_evaluation_with_monitoring(
     return {}
 
 
+def collect_fish_evaluation_duplicate_errors(
+    *,
+    cycle,
+    pond,
+    eval_date,
+) -> dict:
+    """
+    Detecta colisión de fecha en evaluaciones de peces.
+
+    Incluye registros con soft-delete: si la BD aún tiene unique
+    (cycle, evaluation_date, pond), un INSERT nuevo dispara IntegrityError.
+    """
+    rows = FishEvaluated.objects.filter(
+        cycle=cycle,
+        pond=pond,
+        evaluation_date=eval_date,
+    )
+    if not rows.exists():
+        return {}
+
+    if rows.filter(deleted_at__isnull=True).exists():
+        return {
+            "date": (
+                f"Ya existe una evaluación de peces para el {eval_date} "
+                "en este ciclo y estanque."
+            ),
+        }
+
+    return {}
+
+
 def collect_combined_health_stat_payload_errors(
     *,
     cycle,
@@ -250,24 +289,42 @@ def collect_combined_health_stat_payload_errors(
             "La fecha del muestreo no puede ser posterior a la fecha del registro de salud."
         )
 
-    if _fish_evaluations_qs(
-        cycle=cycle,
-        pond=pond,
-        evaluation_date=eval_date,
-    ).exists():
-        errors.setdefault(
-            "date",
-            (
-                f"Ya existe una evaluación de peces para el {eval_date} "
-                "en este ciclo y estanque."
-            ),
+    errors.update(
+        collect_fish_evaluation_duplicate_errors(
+            cycle=cycle,
+            pond=pond,
+            eval_date=eval_date,
         )
+    )
 
     return errors
 
 
 def create_health_stat(*, validated_data, created_by) -> HealthStat:
     return HealthStat.objects.create(**validated_data, created_by=created_by)
+
+
+def _remove_soft_deleted_fish_evaluations(*, cycle, pond, eval_date) -> None:
+    """Libera la fecha si quedó una evaluación con soft-delete (unique en BD)."""
+    FishEvaluated.objects.filter(
+        cycle=cycle,
+        pond=pond,
+        evaluation_date=eval_date,
+        deleted_at__isnull=False,
+    ).delete()
+
+
+def _prepare_control_stat_slot(*, cycle, pond, eval_date) -> None:
+    """
+    FishEvaluatedSerializer (monitoring) hace update_or_create de ControlStat.
+    Si el del día está archivado (soft-delete), reactivarlo antes del save.
+    """
+    ControlStat.objects.filter(
+        cycle=cycle,
+        pond=pond,
+        control_date=eval_date,
+        deleted_at__isnull=False,
+    ).update(deleted_at=None)
 
 
 def create_health_stat_with_fish_evaluation(
@@ -281,30 +338,69 @@ def create_health_stat_with_fish_evaluation(
     pond = validated_data["pond"]
     stat_date = validated_data["date"]
 
-    with transaction.atomic():
-        health_stat = create_health_stat(
-            validated_data=validated_data,
-            created_by=created_by,
-        )
+    try:
+        with transaction.atomic():
+            health_stat = create_health_stat(
+                validated_data=validated_data,
+                created_by=created_by,
+            )
 
-        payload = build_fish_evaluated_payload(
+            payload = build_fish_evaluated_payload(
+                cycle=cycle,
+                pond=pond,
+                stat_date=stat_date,
+                fish=fish,
+                farm=validated_data.get("farm"),
+            )
+            eval_date = fish.get("evaluation_date") or stat_date
+            _remove_soft_deleted_fish_evaluations(
+                cycle=cycle,
+                pond=pond,
+                eval_date=eval_date,
+            )
+            _prepare_control_stat_slot(
+                cycle=cycle,
+                pond=pond,
+                eval_date=eval_date,
+            )
+
+            eval_serializer = FishEvaluatedSerializer(
+                data=payload,
+                context=serializer_context,
+            )
+            eval_serializer.is_valid(raise_exception=True)
+            # cycle/pond son read_only en monitoring; hay que pasarlos en save()
+            # (igual que FishEvaluatedViewSet.perform_create).
+            fish_evaluation = eval_serializer.save(
+                cycle=cycle,
+                pond=pond,
+                farm=validated_data.get("farm"),
+                created_by=created_by,
+            )
+            link_fish_evaluation_to_health_stat(
+                fish_evaluation=fish_evaluation,
+                health_stat=health_stat,
+                created_by=created_by,
+            )
+    except IntegrityError as exc:
+        eval_date = fish.get("evaluation_date") or stat_date
+        duplicate_errors = collect_fish_evaluation_duplicate_errors(
             cycle=cycle,
             pond=pond,
-            stat_date=stat_date,
-            fish=fish,
-            farm=validated_data.get("farm"),
+            eval_date=eval_date,
         )
-        eval_serializer = FishEvaluatedSerializer(
-            data=payload,
-            context=serializer_context,
-        )
-        eval_serializer.is_valid(raise_exception=True)
-        fish_evaluation = eval_serializer.save()
-        link_fish_evaluation_to_health_stat(
-            fish_evaluation=fish_evaluation,
-            health_stat=health_stat,
-            created_by=created_by,
-        )
+        if duplicate_errors:
+            raise ValueError(duplicate_errors) from exc
+        raise ValueError(
+            {
+                "detail": (
+                    "No se pudo guardar la evaluación de peces por un conflicto "
+                    "con datos existentes (fecha, ciclo o estanque). "
+                    "Revise que no haya registros duplicados y que las migraciones "
+                    "estén aplicadas."
+                ),
+            }
+        ) from exc
 
     return {"health_stat": health_stat, "fish_evaluation": fish_evaluation}
 
@@ -380,6 +476,32 @@ def active_treatment_plan_date_overlap(
     return qs.exists()
 
 
+def treatment_product_type_error(product) -> str | None:
+    """None si el tipo de producto es válido para tratamiento; mensaje si no."""
+    if product is None:
+        return None
+    type_name = getattr(
+        getattr(product, "type_product", None),
+        "name",
+        None,
+    )
+    if not type_name:
+        return (
+            "El producto debe tener un tipo de producto configurado "
+            "(medicamento / medicación)."
+        )
+    normalized = type_name.casefold()
+    if any(
+        normalized == allowed.casefold()
+        for allowed in TREATMENT_PLAN_PRODUCT_TYPE_NAMES
+    ):
+        return None
+    return (
+        "El tipo de producto debe ser de medicación permitida para planes de tratamiento "
+        f"(recibido: «{type_name}»)."
+    )
+
+
 def collect_treatment_plan_business_errors(
     *,
     farm_id: int,
@@ -399,7 +521,9 @@ def collect_treatment_plan_business_errors(
         errors["farm"] = "La granja no existe o no está disponible."
 
     if health_stat.farm_id != farm_id:
-        errors["health_stat"] = "El registro de salud debe pertenecer a la misma granja."
+        errors["health_stat"] = (
+            "El registro de salud debe pertenecer a la misma granja."
+        )
 
     cycle = health_stat.cycle
     pond = health_stat.pond
@@ -445,8 +569,12 @@ def collect_treatment_plan_business_errors(
     if product is not None:
         if product.deleted_at is not None:
             errors["product"] = "El producto no está disponible."
-        if product.farm_id != farm_id:
+        elif product.farm_id != farm_id:
             errors["product"] = "El producto debe pertenecer a la misma granja."
+        else:
+            type_err = treatment_product_type_error(product)
+            if type_err:
+                errors["product"] = type_err
 
     return errors
 
@@ -602,9 +730,7 @@ def update_scheduled_treatment_plan(
         locked = TreatmentPlan.objects.select_for_update().get(pk=plan.pk)
         sync_treatment_plan_status(locked, save=True)
         if locked.status != TreatmentPlan.Status.SCHEDULED:
-            raise ValueError(
-                "Solo se puede modificar un plan en estado programado."
-            )
+            raise ValueError("Solo se puede modificar un plan en estado programado.")
         if locked.status == TreatmentPlan.Status.CANCELLED:
             raise ValueError("El plan ya fue cancelado.")
         if locked.farm_id != farm_id:
@@ -656,12 +782,13 @@ def sync_treatment_inventory_for_event(treatment_event: TreatmentEvent):
     Alinea el movimiento OUT de inventario con la dosis real del evento.
 
     Elimina y recrea el movimiento si la cantidad cambió (p. ej. corrección).
-  """
+    """
     te = TreatmentEvent.objects.select_related(
         "farm",
         "cycle",
         "actual_unit",
         "treatment_plan__product",
+        "treatment_plan__product__type_product",
         "treatment_plan__product__unit",
         "treatment_plan__health_stat",
         "treatment_plan__health_stat__pond",
@@ -674,6 +801,10 @@ def sync_treatment_inventory_for_event(treatment_event: TreatmentEvent):
 
     if product.deleted_at is not None:
         raise ValueError("El producto del plan de tratamiento no está disponible.")
+
+    type_err = treatment_product_type_error(product)
+    if type_err:
+        raise ValueError(type_err)
 
     if treatment_event.actual_dose is None or treatment_event.actual_unit is None:
         raise ValueError(
@@ -723,11 +854,7 @@ def collect_treatment_event_close_errors(event: TreatmentEvent, *, now=None) -> 
         return {}
 
     if event.date > today:
-        return {
-            "status": (
-                "No puede cerrar un evento con fecha futura."
-            )
-        }
+        return {"status": ("No puede cerrar un evento con fecha futura.")}
 
     plan = TreatmentPlan.objects.get(pk=event.treatment_plan_id)
     sync_treatment_plan_status(plan)
