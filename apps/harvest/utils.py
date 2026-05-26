@@ -156,6 +156,8 @@ def _build_harvest_allocations(cycle_pond_batches, total_fish_count, total_weigh
 
 
 def _reduce_pond_batch_quantity(pond_batch, quantity):
+    Batch = apps.get_model("batch", "Batch")
+    
     if quantity > pond_batch.current_quantity:
         raise ValueError(
             f"La cantidad cosechada ({quantity}) excede la disponible "
@@ -168,6 +170,12 @@ def _reduce_pond_batch_quantity(pond_batch, quantity):
     if pond_batch.current_quantity == 0:
         pond_batch.end_date = timezone.now().date()
         update_fields.append("end_date")
+        
+        # ✓ NUEVA LÓGICA: Cambiar batch a CONSUMED cuando se vende completamente
+        batch = pond_batch.batch
+        if batch.status == Batch.Status.ACTIVE:
+            batch.status = Batch.Status.CONSUMED
+            batch.save(update_fields=["status"])
 
     pond_batch.save(update_fields=update_fields)
     return pond_batch
@@ -274,26 +282,8 @@ def _validate_cycle_finish_date(cycle, finish_date) -> None:
 
 
 def finish_cycle_from_harvest(cycle, finish_date) -> None:
-    Cycle = apps.get_model("cycle", "Cycle")
-    CyclePondBatch = apps.get_model("cycle", "CyclePondBatch")
-    Pond = apps.get_model("ponds", "Pond")
-
-    _validate_cycle_finish_date(cycle, finish_date)
-
-    cycle.state = Cycle.State.FINISHED
-    cycle.finish_date = finish_date
-    cycle.save(update_fields=["state", "finish_date"])
-
-    ponds_to_update = {
-        cpb.pond_batch.pond
-        for cpb in CyclePondBatch.objects.filter(cycle=cycle).select_related(
-            "pond_batch__pond"
-        )
-    }
-    for pond in ponds_to_update:
-        if pond.status == Pond.Status.IN_USE:
-            pond.status = Pond.Status.CLEANING
-            pond.save(update_fields=["status"])
+    # ✓ REFACTORIZADO: Usar la función centralizada que incluye cambio de batches a FINISHED
+    finish_cycle(cycle, finish_date)
 
 
 def get_classification_derived_fish_count(classification_id: int) -> int:

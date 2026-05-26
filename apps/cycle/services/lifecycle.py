@@ -60,6 +60,25 @@ def _update_ponds_to_cleaning(cycle):
             pond.save(update_fields=["status"])
 
 
+def _update_batches_to_finished(cycle):
+    """✓ NUEVO: Cambiar lotes a FINISHED cuando el ciclo termina"""
+    CyclePondBatch = apps.get_model("cycle", "CyclePondBatch")
+    Batch = apps.get_model("batch", "Batch")
+
+    # Obtener todos los lotes del ciclo
+    batches_to_update = set()
+    for cpb in CyclePondBatch.objects.filter(cycle=cycle).select_related(
+        "pond_batch__batch"
+    ):
+        batches_to_update.add(cpb.pond_batch.batch)
+
+    # Cambiar lotes ACTIVE a FINISHED
+    for batch in batches_to_update:
+        if batch.status == Batch.Status.ACTIVE:
+            batch.status = Batch.Status.FINISHED
+            batch.save(update_fields=["status"])
+
+
 @transaction.atomic
 def finish_cycle(cycle, finish_date):
     _validate_cycle_finish_date(cycle, finish_date)
@@ -71,6 +90,9 @@ def finish_cycle(cycle, finish_date):
     _update_ponds_to_cleaning(cycle)
     cleanup_scheduled_events(cycle)
     resolve_alerts(cycle=cycle)
+    
+    # ✓ NUEVO: Cambiar lotes a FINISHED cuando el ciclo termina
+    _update_batches_to_finished(cycle)
 
 
 @transaction.atomic
@@ -91,3 +113,6 @@ def cancel_cycle(cycle, finish_date=None, resolved_by=None):
     _update_ponds_to_cleaning(cycle)
     cleanup_scheduled_events(cycle)
     resolve_alerts(cycle=cycle, resolved_by=resolved_by)
+    
+    # ✓ NUEVO: Cambiar lotes a FINISHED cuando el ciclo se cancela
+    _update_batches_to_finished(cycle)
