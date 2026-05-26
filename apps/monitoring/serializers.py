@@ -123,6 +123,19 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
 
         return data
 
+    def update(self, instance, validated_data):
+        """
+        ✓ NUEVA VALIDACIÓN: Prohibir editar evaluaciones de ciclos terminados
+        """
+        # Verificar que el ciclo NO esté en estado FINISHED o CANCELLED
+        if instance.cycle.state in [Cycle.State.FINISHED, Cycle.State.CANCELLED]:
+            raise serializers.ValidationError({
+                "detail": "No se puede editar registros de monitoreo de ciclos que ya están terminados o cancelados."
+            })
+        
+        # Proceder con la actualización
+        return super().update(instance, validated_data)
+
     def create(self, validated_data):
         """
         Crea FishEvaluated calculando avg_weight_g automáticamente.
@@ -191,11 +204,45 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
                 )
 
                 if total_quantity > 0:
-                    # Descontar proporcionalmente
-                    for pond_batch in pond_batches:
+                    # ✓ CORRECCIÓN: Usar algoritmo de "largest remainder method"
+                    # para no perder cantidad por truncado de decimales
+                    pond_batches_list = list(pond_batches)
+                    
+                    # Calcular reductions manteniendo decimales
+                    reductions = []
+                    total_reduced = 0
+                    
+                    for pond_batch in pond_batches_list:
                         proportion = pond_batch.current_quantity / total_quantity
-                        quantity_to_reduce = int(mortality_quantity * proportion)
-
+                        quantity_to_reduce_exact = mortality_quantity * proportion
+                        quantity_to_reduce_int = int(quantity_to_reduce_exact)
+                        remainder = quantity_to_reduce_exact - quantity_to_reduce_int
+                        
+                        reductions.append({
+                            'pond_batch': pond_batch,
+                            'reduce_exact': quantity_to_reduce_exact,
+                            'reduce_int': quantity_to_reduce_int,
+                            'remainder': remainder
+                        })
+                        total_reduced += quantity_to_reduce_int
+                    
+                    # Distribuir los decimales remanentes al lote con mayor residuo
+                    remaining_to_distribute = mortality_quantity - total_reduced
+                    
+                    if remaining_to_distribute > 0:
+                        # Ordenar por remainder descendente
+                        reductions_sorted = sorted(reductions, key=lambda x: x['remainder'], reverse=True)
+                        
+                        # Distribuir el residuo entre los que tienen mayor resto
+                        for i in range(remaining_to_distribute):
+                            if i < len(reductions_sorted):
+                                reductions_sorted[i]['reduce_int'] += 1
+                    
+                    # Aplicar reductions
+                    for reduction in reductions:
+                        pond_batch = reduction['pond_batch']
+                        quantity_to_reduce = reduction['reduce_int']
+                        
                         pond_batch.current_quantity -= quantity_to_reduce
                         if pond_batch.current_quantity < 0:
                             pond_batch.current_quantity = 0

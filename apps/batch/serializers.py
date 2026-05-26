@@ -151,12 +151,27 @@ class PondBatchSerializer(serializers.ModelSerializer):
             )
 
             if other_species:
-                raise serializers.ValidationError(
-                    {
-                        "batch": "No se puede combinar lotes de especies distintas en un mismo estanque. "
-                        "Ya hay lotes de otra especie en estado activo."
-                    }
-                )
+                raise serializers.ValidationError({
+                    "batch": "No se puede combinar lotes de especies distintas en un mismo estanque. "
+                             "Ya hay lotes de otra especie en estado activo."
+                })
+        
+        # ✓ NUEVA VALIDACIÓN: Verificar que la etapa biológica coincida
+        if pond and batch:
+            existing_batches = PondBatch.objects.filter(
+                pond=pond,
+                end_date__isnull=True
+            ).select_related("batch")
+            
+            for existing_pond_batch in existing_batches:
+                if existing_pond_batch.batch.biological_state != batch.biological_state:
+                    raise serializers.ValidationError({
+                        "batch": f"La etapa biológica del lote '{batch.get_biological_state_display()}' "
+                                f"no coincide con la de los lotes existentes en el estanque "
+                                f"'{existing_pond_batch.batch.get_biological_state_display()}'. "
+                                f"Los lotes deben estar en la MISMA etapa biológica para convivir "
+                                f"en el mismo estanque."
+                    })
 
         if start_date and start_date > date.today():
             raise serializers.ValidationError(
