@@ -82,32 +82,7 @@ class FarmViewSet(viewsets.ModelViewSet):
         )
 
     def destroy(self, request, *args, **kwargs):
-        from apps.cycle.models import Cycle
-        from apps.ponds.models import Pond
-        
         farm = self.get_object()
-        
-        # ✓ NUEVA VALIDACIÓN: Verificar ciclos activos en los estanques
-        active_cycles = Cycle.objects.filter(
-            farm=farm,
-            state=Cycle.State.IN_PROGRESS,
-            deleted_at__isnull=True
-        )
-        
-        if active_cycles.exists():
-            cycle_info = []
-            for cycle in active_cycles[:5]:
-                cycle_info.append(f"Ciclo '{cycle.name}' en estanque '{cycle.pond.code}'")
-            
-            message = f"No se puede eliminar esta granja. Hay {active_cycles.count()} ciclo(s) en ejecución: {', '.join(cycle_info)}"
-            if active_cycles.count() > 5:
-                message += f" +{active_cycles.count()-5} más"
-            
-            return Response(
-                {"detail": message},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
         farm.deleted_at = timezone.now()
         farm.save(update_fields=["deleted_at"])
         return Response(status=status.HTTP_204_NO_CONTENT)
