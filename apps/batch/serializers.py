@@ -155,8 +155,12 @@ class PondBatchSerializer(serializers.ModelSerializer):
 
         if pond and batch:
             active_pond_batches = (
-                PondBatch.objects.filter(pond=pond, end_date__isnull=True)
-                .select_related("batch", "batch__specie")
+                PondBatch.objects.filter(
+                    pond=pond,
+                    end_date__isnull=True,
+                    current_quantity__gt=0,
+                    batch__status=Batch.Status.ACTIVE,
+                ).select_related("batch", "batch__specie")
             )
             if self.instance:
                 active_pond_batches = active_pond_batches.exclude(pk=self.instance.pk)
