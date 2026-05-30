@@ -87,45 +87,6 @@ class BiomassCalculator:
         return int(total)
 
     @staticmethod
-    def get_cycle_pond_live_quantity(cycle_id: int, pond_id: int) -> int:
-        """
-        Cantidad viva operativa del ciclo en el estanque.
-        """
-        from apps.cycle.models import CyclePondBatch
-
-        total = (
-            CyclePondBatch.objects.filter(
-                cycle_id=cycle_id,
-                pond_batch__pond_id=pond_id,
-                pond_batch__end_date__isnull=True,
-            ).aggregate(total=Sum("pond_batch__current_quantity"))["total"]
-            or 0
-        )
-        return int(total)
-
-    @staticmethod
-    def calculate_control_biomass(
-        cycle_id: int,
-        pond_id: int,
-        avg_weight_g: float,
-        fallback_live_quantity: int = 0,
-    ) -> tuple[int, float]:
-        """
-        Estima biomasa total para control usando stock vivo operativo.
-
-        El muestreo aporta el peso promedio, pero la biomasa y el FCA deben
-        calcularse sobre todos los peces vivos del ciclo/estanque.
-        """
-        live_quantity = BiomassCalculator.get_cycle_pond_live_quantity(
-            cycle_id, pond_id
-        )
-        if live_quantity <= 0:
-            live_quantity = max(0, fallback_live_quantity)
-
-        biomass_kg = BiomassCalculator.calculate_biomass(live_quantity, avg_weight_g)
-        return live_quantity, biomass_kg
-
-    @staticmethod
     def get_previous_control_stat(
         cycle_id: int, pond_id: int, control_date
     ) -> Optional["ControlStat"]:
@@ -327,22 +288,16 @@ class CycleStateCalculator:
 
         sampled_quantity = aggregation["total_sampled"] or 0
         total_mortality = aggregation["total_mortality"] or 0
-        sample_live_quantity = sampled_quantity - total_mortality
+        live_quantity = sampled_quantity - total_mortality
 
-        avg_weight_g = latest_evaluation.avg_weight_g
-        live_quantity, biomass_kg = BiomassCalculator.calculate_control_biomass(
-            cycle_id,
-            latest_evaluation.pond_id,
-            avg_weight_g,
-            fallback_live_quantity=sample_live_quantity,
-        )
-
-        total_fish_seen = live_quantity + total_mortality
         mortality_percentage = (
-            (total_mortality / total_fish_seen * 100)
-            if total_fish_seen > 0
+            (total_mortality / sampled_quantity * 100)
+            if sampled_quantity > 0
             else 0.0
         )
+
+        avg_weight_g = aggregation["avg_weight_avg"] or 0.0
+        biomass_kg = BiomassCalculator.calculate_biomass(live_quantity, avg_weight_g)
 
         # Calcular FCA si hay datos suficientes (2+ ControlStats)
         fca = None
@@ -365,8 +320,8 @@ class CycleStateCalculator:
             "fish_quantity": live_quantity,
             "total_mortality": total_mortality,
             "avg_weight_g": avg_weight_g,
-            "min_weight_g": latest_evaluation.min_weight_g,
-            "max_weight_g": latest_evaluation.max_weight_g,
+            "min_weight_g": aggregation["min_weight"] or 0.0,
+            "max_weight_g": aggregation["max_weight"] or 0.0,
             "mortality_percentage": mortality_percentage,
             "biomass_kg": biomass_kg,
             "fca": fca,
