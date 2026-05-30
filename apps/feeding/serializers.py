@@ -869,6 +869,11 @@ class FeedingEventUpdateSerializer(serializers.ModelSerializer):
     def validate(self, data):
         instance = self.instance
 
+        if instance.cycle.state != Cycle.State.IN_PROGRESS:
+            raise serializers.ValidationError(
+                "No se puede modificar un evento de un ciclo que no está en progreso."
+            )
+
         if instance.status == FeedingEvent.Status.SKIPPED:
             raise serializers.ValidationError(
                 "No se puede modificar un evento omitido."
