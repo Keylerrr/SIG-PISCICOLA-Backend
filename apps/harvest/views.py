@@ -24,7 +24,6 @@ class HarvestListCreateView(generics.ListCreateAPIView):
         return [AdminOr(CanManageCycle)()]
 
     def get_serializer_context(self):
-        # M4: contexto único con farm_pk/farm_id y created_by para el serializer.
         context = super().get_serializer_context()
         context["farm_pk"] = self.kwargs["farm_pk"]
         context["farm_id"] = self.kwargs["farm_pk"]
