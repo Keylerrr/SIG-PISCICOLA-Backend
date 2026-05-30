@@ -265,13 +265,16 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
         # ========== GENERAR CONTROL STAT AUTOMÁTICAMENTE ==========
         evaluation_date = fish_evaluated.evaluation_date
 
-        # Biomasa según la muestra del muestreo (no el stock total del estanque)
-        live_quantity = BiomassCalculator.get_sample_live_quantity(
+        # Biomasa total estimada: stock vivo del ciclo con el peso del muestreo.
+        sample_live_quantity = BiomassCalculator.get_sample_live_quantity(
             fish_evaluated.sampled_quantity,
             fish_evaluated.mortality_quantity,
         )
-        biomass_kg = BiomassCalculator.calculate_biomass(
-            live_quantity, fish_evaluated.avg_weight_g
+        live_quantity, biomass_kg = BiomassCalculator.calculate_control_biomass(
+            cycle.id,
+            pond.id,
+            fish_evaluated.avg_weight_g,
+            fallback_live_quantity=sample_live_quantity,
         )
         mortality_percentage = (
             fish_evaluated.mortality_quantity / fish_evaluated.sampled_quantity * 100
@@ -614,9 +617,12 @@ class ControlStatSerializer(serializers.ModelSerializer):
         # Calcular estadísticas agregadas
         stats = FishEvaluatedCalculator.aggregate_fish_evaluations(evaluations)
 
-        live_quantity = stats["live_quantity"]
-        current_biomass = BiomassCalculator.calculate_biomass(
-            live_quantity, stats["avg_weight_g"]
+        sample_live_quantity = stats["live_quantity"]
+        live_quantity, current_biomass = BiomassCalculator.calculate_control_biomass(
+            cycle.id,
+            pond.id,
+            stats["avg_weight_g"],
+            fallback_live_quantity=sample_live_quantity,
         )
 
         previous_control = BiomassCalculator.get_previous_control_stat(
