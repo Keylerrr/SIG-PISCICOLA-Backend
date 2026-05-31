@@ -102,11 +102,18 @@ class PondBatchSerializer(serializers.ModelSerializer):
         read_only_fields = ["current_quantity"]
 
     def validate(self, data):
-        pond = data.get("pond")
-        batch = data.get("batch")
-        cantidad_nueva = data.get("initial_quantity", 0)
-        start_date = data.get("start_date")
-        end_date = data.get("end_date")
+        pond = data.get("pond") or (self.instance.pond if self.instance else None)
+        batch = data.get("batch") or (self.instance.batch if self.instance else None)
+        cantidad_nueva = data.get(
+            "initial_quantity",
+            self.instance.initial_quantity if self.instance else 0,
+        )
+        start_date = data.get(
+            "start_date", self.instance.start_date if self.instance else None
+        )
+        end_date = data.get(
+            "end_date", self.instance.end_date if self.instance else None
+        )
 
         if pond and pond.deleted_at is not None:
             raise serializers.ValidationError(
@@ -129,49 +136,63 @@ class PondBatchSerializer(serializers.ModelSerializer):
                 }
             )
 
-        ya_asignado = PondBatch.objects.filter(
-            batch=batch, end_date__isnull=True
-        ).exists()
-        if ya_asignado:
-            raise serializers.ValidationError(
-                {"batch": "El lote ya está asignado a un estanque activo."}
+        if batch:
+            asignaciones_activas = PondBatch.objects.filter(
+                batch=batch, end_date__isnull=True
             )
+            if self.instance:
+                asignaciones_activas = asignaciones_activas.exclude(pk=self.instance.pk)
+
+            if asignaciones_activas.exists():
+                raise serializers.ValidationError(
+                    {"batch": "El lote ya está asignado a un estanque activo."}
+                )
 
         if pond and batch and pond.farm_id != batch.farm_id:
             raise serializers.ValidationError(
                 {"pond": "El estanque debe pertenecer a la misma granja del lote."}
             )
 
-        # Validar que no haya lotes de otras especies en el estanque
         if pond and batch:
-            other_species = (
-                PondBatch.objects.filter(pond=pond, end_date__isnull=True)
-                .exclude(batch__specie=batch.specie)
-                .exists()
+            active_pond_batches = (
+                PondBatch.objects.filter(
+                    pond=pond,
+                    end_date__isnull=True,
+                    current_quantity__gt=0,
+                    batch__status=Batch.Status.ACTIVE,
+                ).select_related("batch", "batch__specie")
             )
+            if self.instance:
+                active_pond_batches = active_pond_batches.exclude(pk=self.instance.pk)
+
+            other_species = active_pond_batches.exclude(
+                batch__specie_id=batch.specie_id
+            ).first()
 
             if other_species:
-                raise serializers.ValidationError({
-                    "batch": "No se puede combinar lotes de especies distintas en un mismo estanque. "
-                             "Ya hay lotes de otra especie en estado activo."
-                })
-        
-        # ✓ NUEVA VALIDACIÓN: Verificar que la etapa biológica coincida
-        if pond and batch:
-            existing_batches = PondBatch.objects.filter(
-                pond=pond,
-                end_date__isnull=True
-            ).select_related("batch")
-            
-            for existing_pond_batch in existing_batches:
-                if existing_pond_batch.batch.biological_state != batch.biological_state:
-                    raise serializers.ValidationError({
-                        "batch": f"La etapa biológica del lote '{batch.get_biological_state_display()}' "
-                                f"no coincide con la de los lotes existentes en el estanque "
-                                f"'{existing_pond_batch.batch.get_biological_state_display()}'. "
-                                f"Los lotes deben estar en la MISMA etapa biológica para convivir "
-                                f"en el mismo estanque."
-                    })
+                raise serializers.ValidationError(
+                    {
+                        "batch": "No se puede combinar lotes de especies distintas en un mismo estanque. "
+                        f"El estanque ya tiene un lote de la especie '{other_species.batch.specie}'."
+                    }
+                )
+
+            different_biological_state = (
+                active_pond_batches.filter(batch__specie_id=batch.specie_id)
+                .exclude(batch__biological_state=batch.biological_state)
+                .first()
+            )
+
+            if different_biological_state:
+                raise serializers.ValidationError(
+                    {
+                        "batch": f"No se puede asignar el lote al estanque porque la especie coincide "
+                        f"pero el estado biológico no. Lote nuevo: "
+                        f"'{batch.get_biological_state_display()}'; lote existente: "
+                        f"'{different_biological_state.batch.get_biological_state_display()}'. "
+                        "Para convivir en el mismo estanque, especie y estado biológico deben coincidir."
+                    }
+                )
 
         if start_date and start_date > date.today():
             raise serializers.ValidationError(
@@ -185,12 +206,13 @@ class PondBatchSerializer(serializers.ModelSerializer):
                 }
             )
 
-        cantidad_actual = (
-            PondBatch.objects.filter(pond=pond, end_date__isnull=True).aggregate(
-                total=Sum("current_quantity")
-            )["total"]
-            or 0
-        )
+        cantidad_actual_qs = PondBatch.objects.filter(pond=pond, end_date__isnull=True)
+        if self.instance:
+            cantidad_actual_qs = cantidad_actual_qs.exclude(pk=self.instance.pk)
+
+        cantidad_actual = cantidad_actual_qs.aggregate(total=Sum("current_quantity"))[
+            "total"
+        ] or 0
 
         if cantidad_actual + cantidad_nueva > pond.capacity:
             raise serializers.ValidationError(

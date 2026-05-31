@@ -63,6 +63,7 @@ class AuditLog(models.Model):
         CYCLE_POND_BATCH = "CyclePondBatch", "Cycle Pond Batch"
         POND_BATCH = "PondBatch", "PondBatch"
         SPECIE_POND_TYPE = "SpeciePondType", "SpeciePondType"
+        PRODUCTION_REPORT = "ProductionReport", "Production Report"
 
     user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
