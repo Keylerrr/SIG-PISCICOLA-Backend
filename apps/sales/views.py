@@ -1,14 +1,3 @@
-"""
-Views for the sales app.
-
-Key design decisions applied in this revision:
-  1. All views receive farm_pk from the URL — no farm in the request body.
-  2. Every query is scoped to farm_pk; cross-farm data access is impossible.
-  3. Permission uses AdminOr(CanManageInventory) following the harvest app pattern.
-  4. _get_detail_or_404 is imported at module level (not locally inside methods).
-  5. HarvestClassification ownership is verified against farm_pk on sale creation.
-"""
-
 from datetime import timedelta
 
 from django.shortcuts import get_object_or_404
@@ -31,42 +20,40 @@ from .serializers import (ClientCreateSerializer, ClientDetailSerializer,
                           SaleCreateSerializer, SaleDetailListSerializer,
                           SaleDetailSerializer, SaleDetailUpdateSerializer,
                           SaleListSerializer, SaleUpdateSerializer)
-from .services import (EDIT_WINDOW_MINUTES, _get_detail_or_404,
-                       can_delete_client, create_client, create_full_sale,
-                       delete_client, edit_sale, edit_sale_detail, get_client,
-                       get_sale, list_clients, list_sale_details_by_sale,
-                       list_sales, list_sales_client,
-                       list_sales_harvest_classification, update_client,
-                       update_sale_observations)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# INTERNAL HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
+from .utils import (EDIT_WINDOW_MINUTES, _get_detail_or_404, can_delete_client,
+                    create_client, create_full_sale, delete_client, edit_sale,
+                    edit_sale_detail, get_client, get_sale, list_clients,
+                    list_sale_details_by_sale, list_sales, list_sales_client,
+                    list_sales_harvest_classification, update_client,
+                    update_sale_observations)
 
 
 class _SaleItemInputSerializer(drf_serializers.ModelSerializer):
-    """
-    Validates each item in the ``details`` list of a full-sale creation request.
-    Excludes ``farm`` (injected from URL) and ``sale`` (set by the service).
-    """
-
     class Meta:
         model = SaleDetail
-        fields = ["harvest_classification", "quantity", "unit", "price"]
+        fields = ["harvest_classification", "quantity_g", "fish_count", "price"]
 
-    def validate_quantity(self, value):
+    def validate_quantity_g(self, value):
         if value <= 0:
             raise drf_serializers.ValidationError("La cantidad debe ser mayor a cero.")
         return value
 
+    def validate_fish_count(self, value):
+        if value is not None and value <= 0:
+            raise drf_serializers.ValidationError(
+                "La cantidad de peces debe ser mayor a cero."
+            )
+        return value
+
     def validate_price(self, value):
         if value < 0:
-            raise drf_serializers.ValidationError("El precio no puede ser negativo.")
+            raise drf_serializers.ValidationError(
+                "El precio total no puede ser negativo."
+            )
         return value
 
 
 def _edit_window_payload(reference_dt) -> dict:
-    """Builds the consistent can-edit response payload."""
     deadline = reference_dt + timedelta(minutes=EDIT_WINDOW_MINUTES)
     return {
         "can_edit": timezone.now() <= deadline,
@@ -75,17 +62,11 @@ def _edit_window_payload(reference_dt) -> dict:
     }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CLIENT VIEWS
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 class ClientListCreateView(APIView):
     permission_classes = [AdminOr(CanManageInventory)]
 
     def get(self, request: Request, farm_pk: int) -> Response:
         qp = request.query_params
-        # farm_id is always injected from the URL — never from query params
         filters = {
             "farm_id": farm_pk,
             **{
@@ -98,7 +79,6 @@ class ClientListCreateView(APIView):
 
     def post(self, request: Request, farm_pk: int) -> Response:
         farm = get_object_or_404(Farm, pk=farm_pk)
-        # farm is NOT read from the request body; it comes from the URL
         serializer = ClientCreateSerializer(
             data=request.data,
             context={"farm": farm},
@@ -125,7 +105,7 @@ class ClientRetrieveUpdateDestroyView(APIView):
         return Response(ClientDetailSerializer(updated).data)
 
     def delete(self, request: Request, farm_pk: int, pk: int) -> Response:
-        get_client(pk, farm_id=farm_pk)  # verify ownership before attempting delete
+        get_client(pk, farm_id=farm_pk)
         delete_client(pk)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -146,11 +126,6 @@ class ClientCanDeleteView(APIView):
                 ),
             }
         )
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SALE VIEWS
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 class SaleListView(APIView):
@@ -188,7 +163,6 @@ class FullSaleCreateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # farm is excluded from the body — comes from the URL
         sale_input = {k: v for k, v in request.data.items() if k != "details"}
         sale_ser = SaleCreateSerializer(data=sale_input, context={"farm": farm})
         sale_ser.is_valid(raise_exception=True)
@@ -205,7 +179,6 @@ class FullSaleCreateView(APIView):
         if detail_errors:
             return Response(detail_errors, status=status.HTTP_400_BAD_REQUEST)
 
-        # Verify every HarvestClassification belongs to this farm before delegating
         for idx, ser in enumerate(detail_sers):
             hc: HarvestClassification = ser.validated_data["harvest_classification"]
             if hc.farm_id != farm_pk:
@@ -265,7 +238,7 @@ class SaleObservationsView(APIView):
                 {"observations": "Se esperaba una cadena de texto."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        get_sale(pk, farm_id=farm_pk)  # verify ownership
+        get_sale(pk, farm_id=farm_pk)
         sale = update_sale_observations(pk, observations)
         return Response(SaleDetailSerializer(sale).data)
 
@@ -282,7 +255,6 @@ class SalesByClientView(APIView):
     permission_classes = [AdminOr(CanManageInventory)]
 
     def get(self, request: Request, farm_pk: int, client_id: int) -> Response:
-        # Verify the client belongs to this farm before listing its sales
         get_client(client_id, farm_id=farm_pk)
         sales = list_sales_client(client_id, farm_id=farm_pk)
         return Response(SaleListSerializer(sales, many=True).data)
@@ -292,22 +264,16 @@ class SalesByHarvestClassificationView(APIView):
     permission_classes = [AdminOr(CanManageInventory)]
 
     def get(self, request: Request, farm_pk: int, hc_id: int) -> Response:
-        # Verify the HarvestClassification belongs to this farm
         get_object_or_404(HarvestClassification, pk=hc_id, farm_id=farm_pk)
         sales = list_sales_harvest_classification(hc_id, farm_id=farm_pk)
         return Response(SaleDetailSerializer(sales, many=True).data)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# SALEDETAIL VIEWS
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 class SaleDetailsBySaleView(APIView):
     permission_classes = [AdminOr(CanManageInventory)]
 
     def get(self, request: Request, farm_pk: int, sale_id: int) -> Response:
-        get_sale(sale_id, farm_id=farm_pk)  # verify farm ownership
+        get_sale(sale_id, farm_id=farm_pk)
         details = list_sale_details_by_sale(sale_id)
         return Response(SaleDetailListSerializer(details, many=True).data)
 
@@ -317,7 +283,6 @@ class SaleDetailEditView(APIView):
 
     def patch(self, request: Request, farm_pk: int, pk: int) -> Response:
         detail = _get_detail_or_404(pk)
-        # Prevent editing details from a different farm via URL manipulation
         if detail.farm_id != farm_pk:
             raise ValidationError({"detail": "Detalle de venta no encontrado."})
         serializer = SaleDetailUpdateSerializer(detail, data=request.data, partial=True)

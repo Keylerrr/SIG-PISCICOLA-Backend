@@ -1,3 +1,4 @@
+# services.py
 from .utils import (EDIT_WINDOW_MINUTES, _get_detail_or_404, can_delete_client,
                     can_edit_sale, can_edit_sale_detail, create_client,
                     create_full_sale, delete_client, edit_sale,

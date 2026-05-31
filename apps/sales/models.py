@@ -1,7 +1,9 @@
+# models.py
+import datetime
+
 from django.conf import settings
 from django.db import models
 
-from apps.core.models import Unit
 from apps.farms.models import Farm
 from apps.harvest.models import HarvestClassification
 
@@ -113,7 +115,16 @@ class Sale(models.Model):
         default="",
         verbose_name="Observaciones",
     )
-    date = models.DateField(verbose_name="Fecha")
+    date = models.DateField(
+        verbose_name="Fecha",
+        default=datetime.date.today,
+    )
+    total = models.DecimalField(
+        max_digits=16,
+        decimal_places=2,
+        default=0,
+        verbose_name="Total",
+    )
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.PROTECT,
@@ -132,7 +143,6 @@ class Sale(models.Model):
 
 
 class SaleDetail(models.Model):
-
     farm = models.ForeignKey(
         Farm,
         on_delete=models.PROTECT,
@@ -151,21 +161,20 @@ class SaleDetail(models.Model):
         related_name="sale_details",
         verbose_name="Clasificación de cosecha",
     )
-    quantity = models.DecimalField(
+    quantity_g = models.DecimalField(
         max_digits=12,
         decimal_places=3,
-        verbose_name="Cantidad",
+        verbose_name="Cantidad (g)",
     )
-    unit = models.ForeignKey(
-        Unit,
-        on_delete=models.PROTECT,
-        related_name="sale_details",
-        verbose_name="Unidad",
+    fish_count = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name="Cantidad de peces",
     )
     price = models.DecimalField(
         max_digits=14,
         decimal_places=2,
-        verbose_name="Precio",
+        verbose_name="Precio total del detalle",
     )
 
     class Meta:
@@ -175,9 +184,9 @@ class SaleDetail(models.Model):
     def __str__(self):
         return (
             f"Detalle #{self.pk} — Venta #{self.sale_id} "
-            f"| {self.harvest_classification} x {self.quantity} {self.unit}"
+            f"| {self.harvest_classification} x {self.quantity_g} g"
         )
 
     @property
     def subtotal(self):
-        return self.quantity * self.price
+        return self.quantity_g * self.price

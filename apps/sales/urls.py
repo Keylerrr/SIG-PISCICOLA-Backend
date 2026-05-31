@@ -1,28 +1,4 @@
-"""
-URL configuration for the sales app.
-
-All routes are nested under farms/<farm_pk>/ to enforce per-farm data
-isolation in a SaaS context, matching the pattern used by apps.harvest.
-
-Mount in the project root urlconf with no prefix:
-    path("", include("apps.sales.urls")),
-
-Full URL map:
-    /farms/<farm_pk>/clients/
-    /farms/<farm_pk>/clients/<pk>/
-    /farms/<farm_pk>/clients/<pk>/can-delete/
-    /farms/<farm_pk>/sales/by-client/<client_id>/
-    /farms/<farm_pk>/sales/by-harvest-classification/<hc_id>/
-    /farms/<farm_pk>/sales/
-    /farms/<farm_pk>/sales/create/
-    /farms/<farm_pk>/sales/<pk>/
-    /farms/<farm_pk>/sales/<pk>/edit/
-    /farms/<farm_pk>/sales/<pk>/observations/
-    /farms/<farm_pk>/sales/<pk>/can-edit/
-    /farms/<farm_pk>/sale-details/by-sale/<sale_id>/
-    /farms/<farm_pk>/sale-details/<pk>/
-    /farms/<farm_pk>/sale-details/<pk>/can-edit/
-"""
+# urls .py
 
 from django.urls import path
 
@@ -36,7 +12,6 @@ from .views import (ClientCanDeleteView, ClientListCreateView,
 app_name = "sales"
 
 urlpatterns = [
-    # ── CLIENT ────────────────────────────────────────────────────────────────
     path(
         "farms/<int:farm_pk>/clients/",
         ClientListCreateView.as_view(),
@@ -52,7 +27,6 @@ urlpatterns = [
         ClientCanDeleteView.as_view(),
         name="client-can-delete",
     ),
-    # ── SALE — fixed-segment routes first ────────────────────────────────────
     path(
         "farms/<int:farm_pk>/sales/by-client/<int:client_id>/",
         SalesByClientView.as_view(),
@@ -93,7 +67,6 @@ urlpatterns = [
         SaleCanEditView.as_view(),
         name="sale-can-edit",
     ),
-    # ── SALEDETAIL ────────────────────────────────────────────────────────────
     path(
         "farms/<int:farm_pk>/sale-details/by-sale/<int:sale_id>/",
         SaleDetailsBySaleView.as_view(),

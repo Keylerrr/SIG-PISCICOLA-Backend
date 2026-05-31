@@ -157,7 +157,6 @@ class HarvestSerializer(serializers.ModelSerializer):
     sources = HarvestSourceSerializer(many=True, read_only=True)
     has_active_treatment = serializers.SerializerMethodField()
 
-    # Opcionales en request: se autocompletan en validate() si el cliente no los envía.
     total_fish_count = serializers.IntegerField(required=False, min_value=1)
     total_weight_g = serializers.DecimalField(
         max_digits=14, decimal_places=2, required=False
@@ -279,7 +278,6 @@ class HarvestSerializer(serializers.ModelSerializer):
                 }
             )
 
-        # Si la cosecha agota el stock del ciclo, la fecha debe permitir finish_cycle.
         if date and cycle and total_fish_count is not None:
             available = _get_available_quantity(cycle)
             if total_fish_count >= available and date > cycle.estimated_finish_date:
@@ -363,9 +361,6 @@ class HarvestSerializer(serializers.ModelSerializer):
                     }
                 )
         else:
-            # En modo proporcional se permite que las clasificaciones cubran solo una parte
-            # de la cosecha; la cosecha total se persiste y la trazabilidad del remanente
-            # queda explícitamente disponible a nivel de HarvestSource.
             for classification in classifications:
                 if classification.get("sources"):
                     raise serializers.ValidationError(
@@ -423,6 +418,10 @@ class HarvestSerializer(serializers.ModelSerializer):
         classifications_with_sources = []
         for classification_data in classifications_data:
             sources = classification_data.pop("sources", None)
+            fish_count = classification_data.get("fish_count")
+            if fish_count and harvest.avg_weight_g:
+                expected_weight = Decimal(fish_count) * harvest.avg_weight_g
+                classification_data["total_weight_g"] = expected_weight
             classification = HarvestClassification.objects.create(
                 harvest=harvest,
                 farm=harvest.farm,

@@ -3,6 +3,7 @@ import re
 from rest_framework import serializers
 
 from .models import Client, Sale, SaleDetail
+from .utils import get_classification_available_fish_count_for_sale
 
 _DOCUMENT_RULES: dict[str, tuple[str, str]] = {
     Client.DocumentType.CC: (
@@ -62,7 +63,6 @@ def _validate_client_type_document_type(
 
 
 class ClientCreateSerializer(serializers.ModelSerializer):
-
     class Meta:
         model = Client
         fields = [
@@ -124,12 +124,10 @@ class ClientCreateSerializer(serializers.ModelSerializer):
                     )
                 }
             )
-
         return attrs
 
 
 class ClientListSerializer(serializers.ModelSerializer):
-
     class Meta:
         model = Client
         fields = [
@@ -146,7 +144,6 @@ class ClientListSerializer(serializers.ModelSerializer):
 
 
 class ClientDetailSerializer(serializers.ModelSerializer):
-
     client_type_display = serializers.CharField(
         source="get_client_type_display", read_only=True
     )
@@ -234,12 +231,10 @@ class ClientUpdateSerializer(serializers.ModelSerializer):
                     )
                 }
             )
-
         return attrs
 
 
 class SaleCreateSerializer(serializers.ModelSerializer):
-
     class Meta:
         model = Sale
         fields = [
@@ -252,6 +247,7 @@ class SaleCreateSerializer(serializers.ModelSerializer):
         ]
         extra_kwargs = {
             "created_by": {"read_only": True},
+            "date": {"required": False},
         }
 
     def validate_invoice_number(self, value: str) -> str:
@@ -263,7 +259,7 @@ class SaleCreateSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs: dict) -> dict:
-        farm = selft.context["farm"]
+        farm = self.context["farm"]
         invoice_number = attrs["invoice_number"]
         client = attrs.get("client")
 
@@ -276,17 +272,14 @@ class SaleCreateSerializer(serializers.ModelSerializer):
                     "invoice_number": "Ya existe una venta con este número de factura en esta finca."
                 }
             )
-
         if client is not None and client.farm_id != farm.pk:
             raise serializers.ValidationError(
                 {"client": "El cliente seleccionado no pertenece a la finca indicada."}
             )
-
         return attrs
 
 
 class SaleListSerializer(serializers.ModelSerializer):
-
     client_name = serializers.CharField(
         source="client.name", read_only=True, default=None
     )
@@ -305,18 +298,22 @@ class SaleListSerializer(serializers.ModelSerializer):
             "payment_method",
             "payment_method_display",
             "date",
+            "total",
             "created_by",
         ]
         read_only_fields = fields
 
 
 class _SaleItemInlineSerializer(serializers.ModelSerializer):
+    """Read-only nested serializer para detalles dentro de una venta."""
 
     harvest_classification_name = serializers.CharField(
         source="harvest_classification.name", read_only=True
     )
-    unit_name = serializers.CharField(source="unit.name", read_only=True)
-    subtotal = serializers.DecimalField(max_digits=16, decimal_places=2, read_only=True)
+    # ✅ subtotal ahora es simplemente el price (total del detalle)
+    subtotal = serializers.DecimalField(
+        source="price", max_digits=16, decimal_places=2, read_only=True
+    )
 
     class Meta:
         model = SaleDetail
@@ -324,9 +321,8 @@ class _SaleItemInlineSerializer(serializers.ModelSerializer):
             "id",
             "harvest_classification",
             "harvest_classification_name",
-            "quantity",
-            "unit",
-            "unit_name",
+            "quantity_g",
+            "fish_count",
             "price",
             "subtotal",
         ]
@@ -334,6 +330,7 @@ class _SaleItemInlineSerializer(serializers.ModelSerializer):
 
 
 class SaleDetailSerializer(serializers.ModelSerializer):
+    """Detalle completo de una venta (cabecera + líneas)."""
 
     client_name = serializers.CharField(
         source="client.name", read_only=True, default=None
@@ -345,7 +342,6 @@ class SaleDetailSerializer(serializers.ModelSerializer):
         source="created_by.get_full_name", read_only=True
     )
     items = _SaleItemInlineSerializer(source="details", many=True, read_only=True)
-    total = serializers.SerializerMethodField()
 
     class Meta:
         model = Sale
@@ -368,14 +364,8 @@ class SaleDetailSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    def get_total(self, obj: Sale) -> str:
-        """Sum of (quantity × price) for all line items."""
-        total = sum(item.subtotal for item in obj.details.all())
-        return str(total)
-
 
 class SaleUpdateSerializer(serializers.ModelSerializer):
-
     class Meta:
         model = Sale
         fields = [
@@ -408,39 +398,41 @@ class SaleUpdateSerializer(serializers.ModelSerializer):
                     "invoice_number": "Ya existe una venta con este número de factura en esta finca."
                 }
             )
-
         if client is not None and client.farm_id != self.instance.farm_id:
             raise serializers.ValidationError(
                 {
                     "client": "El cliente seleccionado no pertenece a la finca de esta venta."
                 }
             )
-
         return attrs
 
 
 class SaleDetailCreateSerializer(serializers.ModelSerializer):
-
     class Meta:
         model = SaleDetail
         fields = [
             "farm",
             "sale",
             "harvest_classification",
-            "quantity",
-            "unit",
+            "quantity_g",
+            "fish_count",
             "price",
         ]
 
-    def validate_quantity(self, value):
+    def validate_quantity_g(self, value):
         if value <= 0:
             raise serializers.ValidationError("La cantidad debe ser mayor a cero.")
         return value
 
     def validate_price(self, value):
         if value < 0:
+            raise serializers.ValidationError("El precio total no puede ser negativo.")
+        return value
+
+    def validate_fish_count(self, value):
+        if value is not None and value <= 0:
             raise serializers.ValidationError(
-                "El precio unitario no puede ser negativo."
+                "La cantidad de peces debe ser mayor a cero."
             )
         return value
 
@@ -448,6 +440,7 @@ class SaleDetailCreateSerializer(serializers.ModelSerializer):
         farm = attrs["farm"]
         sale = attrs["sale"]
         harvest_classification = attrs["harvest_classification"]
+        fish_count = attrs.get("fish_count")
 
         if sale.farm_id != farm.pk:
             raise serializers.ValidationError(
@@ -470,27 +463,48 @@ class SaleDetailCreateSerializer(serializers.ModelSerializer):
                 }
             )
 
+        if fish_count is not None:
+            exclude_id = self.instance.pk if self.instance else None
+            available_fish = get_classification_available_fish_count_for_sale(
+                harvest_classification, exclude_detail_id=exclude_id
+            )
+            if fish_count > available_fish:
+                raise serializers.ValidationError(
+                    {
+                        "fish_count": (
+                            f"Cantidad de peces solicitada ({fish_count}) supera la disponible "
+                            f"({available_fish}) para la clasificación '{harvest_classification}'."
+                        )
+                    }
+                )
         return attrs
 
 
 class SaleDetailListSerializer(serializers.ModelSerializer):
-
     harvest_classification_name = serializers.CharField(
         source="harvest_classification.name", read_only=True
     )
-    unit_name = serializers.CharField(source="unit.name", read_only=True)
-    subtotal = serializers.DecimalField(max_digits=16, decimal_places=2, read_only=True)
+    subtotal = serializers.DecimalField(
+        source="price", max_digits=16, decimal_places=2, read_only=True
+    )
+    sale_observations = serializers.CharField(
+        source="sale.observations", read_only=True
+    )
+    invoice_number = serializers.CharField(source="sale.invoice_number", read_only=True)
+    sale_date = serializers.DateField(source="sale.date", read_only=True)
 
     class Meta:
         model = SaleDetail
         fields = [
             "id",
             "sale",
+            "invoice_number",
+            "sale_date",
+            "sale_observations",
             "harvest_classification",
             "harvest_classification_name",
-            "quantity",
-            "unit",
-            "unit_name",
+            "quantity_g",
+            "fish_count",
             "price",
             "subtotal",
         ]
@@ -498,7 +512,6 @@ class SaleDetailListSerializer(serializers.ModelSerializer):
 
 
 class SaleDetailByHarvestSerializer(serializers.ModelSerializer):
-
     invoice_number = serializers.CharField(source="sale.invoice_number", read_only=True)
     sale_date = serializers.DateField(source="sale.date", read_only=True)
     payment_method = serializers.CharField(source="sale.payment_method", read_only=True)
@@ -508,8 +521,9 @@ class SaleDetailByHarvestSerializer(serializers.ModelSerializer):
     client_name = serializers.CharField(
         source="sale.client.name", read_only=True, default=None
     )
-    unit_name = serializers.CharField(source="unit.name", read_only=True)
-    subtotal = serializers.DecimalField(max_digits=16, decimal_places=2, read_only=True)
+    subtotal = serializers.DecimalField(
+        source="price", max_digits=16, decimal_places=2, read_only=True
+    )
 
     class Meta:
         model = SaleDetail
@@ -522,9 +536,8 @@ class SaleDetailByHarvestSerializer(serializers.ModelSerializer):
             "payment_method",
             "payment_method_display",
             "client_name",
-            "quantity",
-            "unit",
-            "unit_name",
+            "quantity_g",
+            "fish_count",
             "price",
             "subtotal",
         ]
@@ -532,25 +545,29 @@ class SaleDetailByHarvestSerializer(serializers.ModelSerializer):
 
 
 class SaleDetailUpdateSerializer(serializers.ModelSerializer):
-
     class Meta:
         model = SaleDetail
         fields = [
             "harvest_classification",
-            "quantity",
-            "unit",
+            "quantity_g",
+            "fish_count",
             "price",
         ]
 
-    def validate_quantity(self, value):
+    def validate_quantity_g(self, value):
         if value <= 0:
             raise serializers.ValidationError("La cantidad debe ser mayor a cero.")
         return value
 
     def validate_price(self, value):
         if value < 0:
+            raise serializers.ValidationError("El precio total no puede ser negativo.")
+        return value
+
+    def validate_fish_count(self, value):
+        if value is not None and value <= 0:
             raise serializers.ValidationError(
-                "El precio unitario no puede ser negativo."
+                "La cantidad de peces debe ser mayor a cero."
             )
         return value
 
@@ -572,4 +589,18 @@ class SaleDetailUpdateSerializer(serializers.ModelSerializer):
                 }
             )
 
+        if "fish_count" in attrs and attrs["fish_count"] is not None:
+            available_fish = get_classification_available_fish_count_for_sale(
+                harvest_classification,
+                exclude_detail_id=self.instance.pk,
+            )
+            if attrs["fish_count"] > available_fish:
+                raise serializers.ValidationError(
+                    {
+                        "fish_count": (
+                            f"Cantidad de peces solicitada ({attrs['fish_count']}) supera la disponible "
+                            f"({available_fish}) para la clasificación '{harvest_classification}'."
+                        )
+                    }
+                )
         return attrs
