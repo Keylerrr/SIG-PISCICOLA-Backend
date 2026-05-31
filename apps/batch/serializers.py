@@ -177,20 +177,20 @@ class PondBatchSerializer(serializers.ModelSerializer):
                     }
                 )
 
-            different_stage = (
+            different_biological_state = (
                 active_pond_batches.filter(batch__specie_id=batch.specie_id)
                 .exclude(batch__biological_state=batch.biological_state)
                 .first()
             )
 
-            if different_stage:
+            if different_biological_state:
                 raise serializers.ValidationError(
                     {
                         "batch": f"No se puede asignar el lote al estanque porque la especie coincide "
-                        f"pero la etapa biológica no. Lote nuevo: "
+                        f"pero el estado biológico no. Lote nuevo: "
                         f"'{batch.get_biological_state_display()}'; lote existente: "
-                        f"'{different_stage.batch.get_biological_state_display()}'. "
-                        "Para convivir en el mismo estanque, especie y etapa biológica deben coincidir."
+                        f"'{different_biological_state.batch.get_biological_state_display()}'. "
+                        "Para convivir en el mismo estanque, especie y estado biológico deben coincidir."
                     }
                 )
 
