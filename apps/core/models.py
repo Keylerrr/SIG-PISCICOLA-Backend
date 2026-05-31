@@ -107,6 +107,7 @@ class Alert(models.Model):
         AMBIENTAL = "Ambiental", "Ambiental"
         CONTROL = "Control", "Control"
         FEEDING = "Feeding", "Alimentación"
+        SALE = "Sale", "Venta"
 
     class Severity(models.TextChoices):
         LOW = "low", "Baja"

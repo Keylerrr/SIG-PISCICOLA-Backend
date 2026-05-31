@@ -19,24 +19,15 @@ def get_pond_or_404(farm, pond_id) -> Pond:
 
 
 def soft_delete_pond(pond: Pond) -> None:
-    """
-    Soft delete a pond (marca como eliminado).
-    Verifica que no haya ciclos activos asociados.
-    """
-    from apps.cycle.models import CyclePondBatch, Cycle
-    
-    # Verificar si hay ciclos activos asociados al estanque
-    active_cycles = CyclePondBatch.objects.filter(
-        pond_batch__pond=pond,
-        cycle__state=Cycle.State.IN_PROGRESS
-    ).exists()
-    
-    if active_cycles:
+    from apps.cycle.models import CyclePondBatch
+
+    has_cycles = CyclePondBatch.objects.filter(pond_batch__pond=pond).exists()
+
+    if has_cycles:
         raise ValueError(
-            "No se puede eliminar un estanque que tiene ciclos activos asociados. "
-            "Finaliza los ciclos primero."
+            "No se puede eliminar el estanque porque tiene ciclos asociados. "
         )
-    
+
     pond.deleted_at = timezone.now()
     pond.save(update_fields=["deleted_at"])
 

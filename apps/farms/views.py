@@ -82,7 +82,23 @@ class FarmViewSet(viewsets.ModelViewSet):
         )
 
     def destroy(self, request, *args, **kwargs):
+        from apps.cycle.models import Cycle
+
         farm = self.get_object()
+
+        any_cycle = Cycle.objects.filter(farm=farm, deleted_at__isnull=True).exists()
+
+        if any_cycle:
+            cycle_count = Cycle.objects.filter(
+                farm=farm, deleted_at__isnull=True
+            ).count()
+            return Response(
+                {
+                    "detail": f"No se puede eliminar la granja porque tiene {cycle_count} ciclo(s) registrado(s). Elimine o cancele los ciclos primero."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         farm.deleted_at = timezone.now()
         farm.save(update_fields=["deleted_at"])
         return Response(status=status.HTTP_204_NO_CONTENT)
