@@ -58,6 +58,20 @@ def export_production_report_xlsx(report_data: dict) -> bytes:
     if report_data.get("cycle_id"):
         summary.append(["Ciclo consultado (ID)", report_data["cycle_id"]])
     summary.append([])
+    summary.append(["Indicadores de productividad"])
+    summary.append(["Indicador", "Valor", "Estado", "Clasificación", "Recomendación", "Notas"])
+    for indicator in report_data.get("productivity_indicators", []):
+        summary.append(
+            [
+                indicator["name"],
+                indicator["value"],
+                indicator["status"],
+                indicator["classification"],
+                indicator["recommendation"],
+                indicator["notes"],
+            ]
+        )
+    summary.append([])
     summary.append(["Módulos incluidos"])
     for key in report_data["selected_modules"]:
         mod = report_data["modules"][key]

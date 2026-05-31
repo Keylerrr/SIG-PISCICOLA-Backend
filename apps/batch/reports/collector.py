@@ -21,6 +21,7 @@ from .constants import (
     MODULE_LABELS,
     MODULE_SALES,
 )
+from .indicators import collect_productivity_indicators
 
 
 def _serialize_batch(batch: Batch) -> dict:
@@ -376,6 +377,11 @@ def collect_production_report_data(
         "empty_modules": empty_modules,
         "empty_module_labels": [MODULE_LABELS[m] for m in empty_modules],
         "selected_modules": selected,
+        "productivity_indicators": collect_productivity_indicators(
+            batch=batch,
+            cycle_ids=ctx["cycle_ids"],
+            cycle_id=cycle_id,
+        ),
         "generated_at": timezone.now().isoformat(),
         "generated_by": user_display,
         "cycle_id": cycle_id,

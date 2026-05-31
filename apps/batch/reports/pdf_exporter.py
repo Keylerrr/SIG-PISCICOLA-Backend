@@ -107,6 +107,35 @@ def export_production_report_pdf(report_data: dict) -> bytes:
         )
     story.append(Spacer(1, 0.15 * inch))
 
+    story.append(Paragraph("Indicadores de productividad", styles["heading"]))
+    indicator_rows = [["Indicador", "Valor", "Estado", "Clasificación", "Recomendación", "Notas"]]
+    for indicator in report_data.get("productivity_indicators", []):
+        indicator_rows.append(
+            [
+                indicator["name"],
+                indicator["value"],
+                indicator["status"],
+                indicator["classification"],
+                indicator["recommendation"],
+                indicator["notes"],
+            ]
+        )
+    indicator_table = Table(indicator_rows, repeatRows=1)
+    indicator_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2c5282")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f7fafc")]),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ]
+        )
+    )
+    story.append(indicator_table)
+    story.append(Spacer(1, 0.15 * inch))
+
     ctx = report_data["context"]
     if ctx.get("cycles"):
         story.append(Paragraph("Ciclos asociados", styles["heading"]))
