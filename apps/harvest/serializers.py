@@ -12,6 +12,7 @@ from .models import (Harvest, HarvestClassification,
 from .utils import (_check_active_treatment, _get_available_quantity,
                     _validate_harvest, confirm_harvest,
                     get_classification_available_fish_count,
+                    get_classification_available_weight_g,
                     get_classification_derived_fish_count, get_cycle_weights,
                     infer_biological_state_for_classification,
                     infer_harvest_type, infer_specie_id_for_classification,
@@ -49,7 +50,7 @@ class HarvestClassificationSourceSerializer(serializers.ModelSerializer):
 
 
 class HarvestClassificationDerivationSerializer(serializers.ModelSerializer):
-    batch_id = serializers.IntegerField(source="batch_id", read_only=True)
+    batch_id = serializers.IntegerField()
 
     class Meta:
         model = HarvestClassificationDerivation
@@ -69,6 +70,7 @@ class HarvestClassificationSerializer(serializers.ModelSerializer):
     derivations = HarvestClassificationDerivationSerializer(many=True, read_only=True)
     derived_fish_count = serializers.SerializerMethodField()
     available_fish_count = serializers.SerializerMethodField()
+    available_weight_g = serializers.SerializerMethodField()
 
     class Meta:
         model = HarvestClassification
@@ -83,6 +85,7 @@ class HarvestClassificationSerializer(serializers.ModelSerializer):
             "derivations",
             "derived_fish_count",
             "available_fish_count",
+            "available_weight_g",
             "created_at",
             "updated_at",
         ]
@@ -91,6 +94,7 @@ class HarvestClassificationSerializer(serializers.ModelSerializer):
             "derivations",
             "derived_fish_count",
             "available_fish_count",
+            "available_weight_g",
             "created_at",
             "updated_at",
         ]
@@ -104,6 +108,11 @@ class HarvestClassificationSerializer(serializers.ModelSerializer):
         if hasattr(obj, "_available_fish_count"):
             return obj._available_fish_count
         return get_classification_available_fish_count(obj)
+
+    def get_available_weight_g(self, obj):
+        if hasattr(obj, "_available_weight_g"):
+            return obj._available_weight_g
+        return get_classification_available_weight_g(obj)
 
 
 class HarvestClassificationWriteSerializer(serializers.ModelSerializer):

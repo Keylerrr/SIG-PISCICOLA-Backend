@@ -11,8 +11,11 @@ from django.db.models import Q, QuerySet, Sum
 from django.utils import timezone
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
-from apps.harvests.models import (HarvestClassification,
-                                  HarvestClassificationDerivation)
+from apps.harvest.models import (
+    HarvestClassification,
+    HarvestClassificationDerivation,
+)
+from apps.harvest import utils as harvest_utils
 
 from .models import Client, Sale, SaleDetail
 
@@ -76,20 +79,9 @@ def get_classification_available_weight_g(
     classification: HarvestClassification,
     exclude_detail_id: int | None = None,
 ) -> Decimal:
-    derived_weight: Decimal = HarvestClassificationDerivation.objects.filter(
-        classification=classification
-    ).aggregate(total=Sum("total_weight_g"))["total"] or Decimal("0")
-
-    sold_qs = SaleDetail.objects.filter(harvest_classification=classification)
-    if exclude_detail_id is not None:
-        sold_qs = sold_qs.exclude(pk=exclude_detail_id)
-
-    sold_weight: Decimal = sold_qs.aggregate(total=Sum("quantity"))["total"] or Decimal(
-        "0"
+    return harvest_utils.get_classification_available_weight_g(
+        classification, exclude_detail_id=exclude_detail_id
     )
-
-    available = classification.total_weight_g - derived_weight - sold_weight
-    return max(available, Decimal("0"))
 
 
 def _validate_weight(

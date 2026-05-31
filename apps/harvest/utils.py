@@ -298,6 +298,35 @@ def get_classification_available_fish_count(
     return max(classification.fish_count - derived, 0)
 
 
+def get_classification_available_weight_g(
+    classification: HarvestClassification,
+    exclude_detail_id: int | None = None,
+) -> Decimal:
+    """Return available weight (grams) for a HarvestClassification.
+
+    Calculation: classification.total_weight_g - derived_weight - sold_weight
+    where:
+      - derived_weight = sum of HarvestClassificationDerivation.total_weight_g
+      - sold_weight = sum of SaleDetail.quantity (optionally excluding a detail id)
+
+    Uses apps.get_model to avoid direct app import.
+    """
+    derived_weight: Decimal = HarvestClassificationDerivation.objects.filter(
+        classification=classification
+    ).aggregate(total=Sum("total_weight_g"))["total"] or Decimal("0")
+
+    SaleDetail = apps.get_model("sales", "SaleDetail")
+    sold_qs = SaleDetail.objects.filter(harvest_classification=classification)
+    if exclude_detail_id is not None:
+        sold_qs = sold_qs.exclude(pk=exclude_detail_id)
+
+    sold_weight = sold_qs.aggregate(total=Sum("quantity"))["total"] or Decimal("0")
+
+    total_weight = Decimal(str(classification.total_weight_g))
+    available = total_weight - derived_weight - Decimal(sold_weight)
+    return max(available, Decimal("0"))
+
+
 def _weight_for_partial_derivation(classification, fish_count: int) -> Decimal:
     if classification.fish_count <= 0:
         return Decimal("0")
