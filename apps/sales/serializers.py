@@ -66,7 +66,6 @@ class ClientCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Client
         fields = [
-            "farm",
             "client_type",
             "name",
             "document_type",
@@ -104,7 +103,7 @@ class ClientCreateSerializer(serializers.ModelSerializer):
         client_type = attrs["client_type"]
         document_type = attrs["document_type"]
         document_number = attrs["document_number"]
-        farm = attrs["farm"]
+        farm = self.context["farm"]
 
         _validate_client_type_document_type(client_type, document_type)
         _validate_document_format(document_type, document_number)
@@ -244,7 +243,6 @@ class SaleCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Sale
         fields = [
-            "farm",
             "client",
             "invoice_number",
             "payment_method",
@@ -265,7 +263,7 @@ class SaleCreateSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs: dict) -> dict:
-        farm = attrs["farm"]
+        farm = selft.context["farm"]
         invoice_number = attrs["invoice_number"]
         client = attrs.get("client")
 

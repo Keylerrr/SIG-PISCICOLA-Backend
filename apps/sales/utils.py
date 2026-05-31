@@ -183,30 +183,38 @@ def list_sales(filters: dict[str, Any] | None = None) -> QuerySet[Sale]:
 
     return qs.order_by("-created_at")
 
-
-def list_sales_client(client_id: int) -> QuerySet[Sale]:
-    return (
+def list_sales_client(client_id: int, *, farm_id: int | None = None) -> QuerySet[Sale]:
+    qs = (
         Sale.objects.select_related("farm", "client", "created_by")
         .filter(client_id=client_id)
         .order_by("-created_at")
     )
-
+    if farm_id is not None:
+        qs = qs.filter(farm_id=farm_id)
+    return qs
 
 def list_sales_harvest_classification(
     harvest_classification_id: int,
+    *,
+    farm_id: int | None = None,
 ) -> QuerySet[Sale]:
-    return (
+    qs = (
         Sale.objects.select_related("farm", "client", "created_by")
         .prefetch_related("details__harvest_classification", "details__unit")
         .filter(details__harvest_classification_id=harvest_classification_id)
         .distinct()
         .order_by("-created_at")
     )
+    if farm_id is not None:
+        qs = qs.filter(farm_id=farm_id)
+    return qs
 
 
-def get_sale(sale_id: int) -> Sale:
-    return _get_sale_or_404(sale_id)
-
+def get_sale(sale_id: int, *, farm_id: int | None = None) -> Sale:
+    sale = _get_sale_or_404(sale_id)
+    if farm_id is not None and sale.farm_id != farm_id:
+        raise ValidationError({"detail": f"Venta con id={sale_id} no encontrada."})
+    return sale
 
 def can_edit_sale(sale_id: int) -> bool:
     sale = _get_sale_or_404(sale_id)
