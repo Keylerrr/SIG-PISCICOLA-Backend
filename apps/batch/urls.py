@@ -1,6 +1,7 @@
 from rest_framework.routers import DefaultRouter
 from django.urls import path
 
+from .reports.views import BatchProductionReportView
 from .views import BatchViewSet, PondBatchViewSet, BatchTransferViewSet
 
 router = DefaultRouter()
@@ -30,6 +31,11 @@ urlpatterns = [
         "farms/<int:farm_pk>/batches/<int:pk>/set-status/",
         BatchViewSet.as_view({"patch": "set_status"}),
         name="batch-set-status",
+    ),
+    path(
+        "farms/<int:farm_pk>/batches/<batch_pk>/production-report/",
+        BatchProductionReportView.as_view(),
+        name="batch-production-report",
     ),
     path(
         "farms/<int:farm_pk>/pond-batches/",

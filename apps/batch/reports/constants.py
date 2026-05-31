@@ -1,0 +1,26 @@
+MODULE_FEEDING = "feeding"
+MODULE_BIOMETRY = "biometry"
+MODULE_HEALTH = "health"
+MODULE_HARVEST = "harvest"
+MODULE_SALES = "sales"
+
+ALL_MODULES = (
+    MODULE_FEEDING,
+    MODULE_BIOMETRY,
+    MODULE_HEALTH,
+    MODULE_HARVEST,
+    MODULE_SALES,
+)
+
+MODULE_LABELS = {
+    MODULE_FEEDING: "Alimentación",
+    MODULE_BIOMETRY: "Biometría",
+    MODULE_HEALTH: "Sanidad",
+    MODULE_HARVEST: "Cosecha",
+    MODULE_SALES: "Ventas",
+}
+
+FORMAT_PDF = "pdf"
+FORMAT_XLSX = "xlsx"
+
+EXPORT_FORMATS = (FORMAT_PDF, FORMAT_XLSX)
