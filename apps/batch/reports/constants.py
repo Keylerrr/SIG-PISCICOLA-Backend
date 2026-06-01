@@ -20,6 +20,14 @@ MODULE_LABELS = {
     MODULE_SALES: "Ventas",
 }
 
+MODULE_COLORS = {
+    MODULE_FEEDING: "#1f77b4",  
+    MODULE_BIOMETRY: "#2ca02c",
+    MODULE_HEALTH: "#d62728",  
+    MODULE_HARVEST: "#ff7f0e",  
+    MODULE_SALES: "#9467bd",   
+}
+
 FORMAT_PDF = "pdf"
 FORMAT_XLSX = "xlsx"
 

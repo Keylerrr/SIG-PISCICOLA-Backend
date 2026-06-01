@@ -133,6 +133,31 @@ def _collect_feeding(cycle_ids: list[int]) -> list[dict]:
         cycle_id__in=cycle_ids,
         deleted_at__isnull=True,
     ).select_related("feeding_schedule", "cycle")
+    seen_sched = set()
+    for plan in plans:
+        sched = plan.feeding_schedule
+        if sched and sched.id not in seen_sched:
+            seen_sched.add(sched.id)
+            records.append(
+                {
+                    "tipo": "cronograma",
+                    "nombre": sched.name,
+                    "etapa": sched.get_type_display(),
+                    "forma_alimento": sched.get_feed_form_display(),
+                    "tamano_pellet_mm": str(sched.pellet_size_mm),
+                    "porcentaje_alimentacion": str(sched.feeding_rate_percentage),
+                    "veces_por_dia": sched.times_per_day,
+                    "intervalo_entre_raciones_min": sched.gap_between_times_per_day,
+                    "intervalo_entre_jornadas_dias": sched.gap_between_completed_day,
+                    "esperado_fca": str(sched.expected_fca),
+                    "ganancia_diaria_g": str(sched.expected_daily_gain_g),
+                    "peso_min_aceptable_g": str(sched.aceptable_min_weight_g),
+                    "peso_max_aceptable_g": str(sched.aceptable_max_weight_g),
+                    "comentarios": sched.comments or "",
+                }
+            )
+
+    # Planes de alimentación por ciclo
     for plan in plans:
         records.append(
             {

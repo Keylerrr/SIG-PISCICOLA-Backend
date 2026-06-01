@@ -6,16 +6,17 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from .constants import MODULE_LABELS, MODULE_FEEDING, MODULE_BIOMETRY
+from .constants import MODULE_LABELS, MODULE_FEEDING, MODULE_BIOMETRY, MODULE_COLORS
 
 PAGE_MARGIN = 0.6 * inch
 AVAILABLE_WIDTH = letter[0] - 2 * PAGE_MARGIN
 
 
-def _get_table_style():
+def _get_table_style(header_hex: str | None = None):
+    header_color = colors.HexColor(header_hex) if header_hex else colors.HexColor("#00ffff")
     return TableStyle(
         [
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#00ffff")),
+            ("BACKGROUND", (0, 0), (-1, 0), header_color),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
             ("FONTSIZE", (0, 0), (-1, -1), 8),
             ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
@@ -27,7 +28,7 @@ def _get_table_style():
     )
 
 
-def _create_table(data, col_count=None):
+def _create_table(data, col_count=None, header_color: str | None = None):
     if not data or len(data) < 1:
         return None
     
@@ -42,7 +43,7 @@ def _create_table(data, col_count=None):
     col_width = AVAILABLE_WIDTH / col_count
     
     table = Table(formatted_data, colWidths=[col_width] * col_count, repeatRows=1)
-    table.setStyle(_get_table_style())
+    table.setStyle(_get_table_style(header_color))
     return table
 
 
@@ -84,7 +85,7 @@ def _styles():
     }
 
 
-def _records_to_table(records: list[dict]) -> Table | Paragraph:
+def _records_to_table(records: list[dict], header_color: str | None = None) -> Table | Paragraph:
     if not records:
         return Paragraph("Sin registros.", _styles()["body"])
 
@@ -99,7 +100,7 @@ def _records_to_table(records: list[dict]) -> Table | Paragraph:
     for rec in records:
         rows.append([str(rec.get(k, "")) for k in keys])
 
-    return _create_table(rows, col_count=len(keys))
+    return _create_table(rows, col_count=len(keys), header_color=header_color)
 
 
 def _filter_records_by_type(records: list[dict], type_value: str) -> list[dict]:
@@ -107,7 +108,7 @@ def _filter_records_by_type(records: list[dict], type_value: str) -> list[dict]:
     return [r for r in records if r.get("tipo") == type_value]
 
 
-def _build_feeding_section(records: list[dict], styles: dict) -> list:
+def _build_feeding_section(records: list[dict], styles: dict, header_color: str | None = None) -> list:
     story = []
     
     if not records:
@@ -115,6 +116,44 @@ def _build_feeding_section(records: list[dict], styles: dict) -> list:
         return story
     
     # Cronogramas (unique programs)
+    # Detalles reales de los cronogramas (FeedingSchedule)
+    cronograms = _filter_records_by_type(records, "cronograma")
+    if cronograms:
+        story.append(Paragraph("Detalles de cronogramas", styles["subheading"]))
+        cron_rows = [[
+            "Nombre",
+            "Etapa",
+            "Forma alimento",
+            "Tamaño pellet (mm)",
+            "% Alimentación",
+            "Veces/día",
+            "Int. raciones (min)",
+            "Int. jornadas (días)",
+            "FCA esperado",
+            "Ganancia diaria (g)",
+            "Peso min (g)",
+            "Peso max (g)",
+            "Comentarios",
+        ]]
+        for cr in cronograms:
+            cron_rows.append([
+                cr.get("nombre", "—"),
+                cr.get("etapa", "—"),
+                cr.get("forma_alimento", "—"),
+                cr.get("tamano_pellet_mm", "—"),
+                cr.get("porcentaje_alimentacion", "—"),
+                str(cr.get("veces_por_dia", "—")),
+                str(cr.get("intervalo_entre_raciones_min", "—")),
+                str(cr.get("intervalo_entre_jornadas_dias", "—")),
+                cr.get("esperado_fca", "—"),
+                cr.get("ganancia_diaria_g", "—"),
+                cr.get("peso_min_aceptable_g", "—"),
+                cr.get("peso_max_aceptable_g", "—"),
+                cr.get("comentarios", ""),
+            ])
+        story.append(_create_table(cron_rows, col_count=len(cron_rows[0]), header_color=header_color))
+        story.append(Spacer(1, 0.08 * inch))
+
     plans = _filter_records_by_type(records, "plan")
     if plans:
         story.append(Paragraph("Cronogramas de alimentación", styles["subheading"]))
@@ -133,7 +172,7 @@ def _build_feeding_section(records: list[dict], styles: dict) -> list:
                     plan.get("inicio", "—"),
                     plan.get("fin", "—"),
                 ])
-            story.append(_create_table(program_rows, col_count=4))
+            story.append(_create_table(program_rows, col_count=4, header_color=header_color))
             story.append(Spacer(1, 0.08 * inch))
     
     # Planes de alimentación
@@ -147,7 +186,7 @@ def _build_feeding_section(records: list[dict], styles: dict) -> list:
                 plan.get("inicio", "—"),
                 plan.get("fin", "—"),
             ])
-        story.append(_create_table(plan_rows, col_count=4))
+        story.append(_create_table(plan_rows, col_count=4, header_color=header_color))
         story.append(Spacer(1, 0.08 * inch))
     
     # Eventos de alimentación
@@ -165,13 +204,13 @@ def _build_feeding_section(records: list[dict], styles: dict) -> list:
                 event.get("cantidad", "—"),
                 event.get("unidad", "—"),
             ])
-        story.append(_create_table(event_rows, col_count=7))
+        story.append(_create_table(event_rows, col_count=7, header_color=header_color))
         story.append(Spacer(1, 0.08 * inch))
     
     return story
 
 
-def _build_biometry_section(records: list[dict], styles: dict) -> list:
+def _build_biometry_section(records: list[dict], styles: dict, header_color: str | None = None) -> list:
     story = []
     
     if not records:
@@ -195,7 +234,7 @@ def _build_biometry_section(records: list[dict], styles: dict) -> list:
                 str(control.get("biomasa_kg", "—")),
                 str(control.get("fca", "—")),
             ])
-        story.append(_create_table(control_rows, col_count=9))
+        story.append(_create_table(control_rows, col_count=9, header_color=header_color))
         story.append(Spacer(1, 0.08 * inch))
     
     # Evaluaciones realizadas
@@ -212,7 +251,7 @@ def _build_biometry_section(records: list[dict], styles: dict) -> list:
                 str(eval.get("peso_prom_g", "—")),
                 str(eval.get("mortalidad", "—")),
             ])
-        story.append(_create_table(eval_rows, col_count=6))
+        story.append(_create_table(eval_rows, col_count=6, header_color=header_color))
         story.append(Spacer(1, 0.08 * inch))
     
     return story
@@ -291,14 +330,16 @@ def export_production_report_pdf(report_data: dict) -> bytes:
     for module_key in report_data["selected_modules"]:
         mod = report_data["modules"][module_key]
         story.append(Paragraph(mod["label"], styles["heading"]))
-        
+        # obtener color por módulo (opcional)
+        module_color = MODULE_COLORS.get(module_key)
+
         if module_key == MODULE_FEEDING:
-            story.extend(_build_feeding_section(mod["records"], styles))
+            story.extend(_build_feeding_section(mod["records"], styles, header_color=module_color))
         elif module_key == MODULE_BIOMETRY:
-            story.extend(_build_biometry_section(mod["records"], styles))
+            story.extend(_build_biometry_section(mod["records"], styles, header_color=module_color))
         else:
             if mod["has_data"]:
-                table = _records_to_table(mod["records"])
+                table = _records_to_table(mod["records"], header_color=module_color)
                 if table:
                     story.append(table)
             else:
