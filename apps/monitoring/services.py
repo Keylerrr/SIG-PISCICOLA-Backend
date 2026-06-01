@@ -139,7 +139,11 @@ class BiomassCalculator:
         if total_quantity > 0:
             live_quantity = max(0, total_quantity - int(mortality_quantity or 0))
         else:
-            live_quantity = max(0, fallback_live_quantity)
+            live_quantity = BiomassCalculator.get_cycle_pond_live_quantity(
+                cycle_id, pond_id
+            )
+            if live_quantity <= 0:
+                live_quantity = max(0, fallback_live_quantity)
 
         biomass_kg = BiomassCalculator.calculate_biomass(live_quantity, avg_weight_g)
         return live_quantity, biomass_kg

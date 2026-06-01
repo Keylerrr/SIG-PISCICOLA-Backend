@@ -26,6 +26,8 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
     """
 
     batch_id = serializers.IntegerField(write_only=True, required=False)
+    live_quantity = serializers.SerializerMethodField()
+    biomass_kg = serializers.SerializerMethodField()
 
     class Meta:
         model = FishEvaluated
@@ -39,12 +41,43 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
             "avg_weight_g",
             "max_weight_g",
             "mortality_quantity",
+            "live_quantity",
+            "biomass_kg",
             "observations",
             "batch_id",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["cycle", "pond", "avg_weight_g", "created_at", "updated_at"]
+        read_only_fields = [
+            "cycle",
+            "pond",
+            "avg_weight_g",
+            "live_quantity",
+            "biomass_kg",
+            "created_at",
+            "updated_at",
+        ]
+
+    def _calculate_evaluation_biomass(self, obj):
+        sample_live_quantity = BiomassCalculator.get_sample_live_quantity(
+            obj.sampled_quantity,
+            obj.mortality_quantity,
+        )
+        return BiomassCalculator.calculate_control_biomass(
+            obj.cycle_id,
+            obj.pond_id,
+            obj.avg_weight_g,
+            mortality_quantity=obj.mortality_quantity,
+            fallback_live_quantity=sample_live_quantity,
+        )
+
+    def get_live_quantity(self, obj):
+        live_quantity, _ = self._calculate_evaluation_biomass(obj)
+        return live_quantity
+
+    def get_biomass_kg(self, obj):
+        _, biomass_kg = self._calculate_evaluation_biomass(obj)
+        return biomass_kg
 
     def _get_active_cycle_pond_batches(self, cycle, pond):
         return list(
