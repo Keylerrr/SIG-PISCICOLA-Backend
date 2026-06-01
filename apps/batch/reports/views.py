@@ -2,6 +2,8 @@ from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import OpenApiResponse, extend_schema
+from rest_framework import status
+from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.accounts.permissions import AdminOr
@@ -19,8 +21,17 @@ from .serializers import ProductionReportRequestSerializer
 def _user_display(user) -> str:
     if not user or not user.is_authenticated:
         return ""
-    name = f"{user.first_name} {user.last_name}".strip()
-    return name or user.email or str(user.pk)
+
+    first_name = getattr(user, "first_name", None)
+    last_name = getattr(user, "last_name", None)
+    name = f"{first_name or ''} {last_name or ''}".strip()
+
+    if not name:
+        name = getattr(user, "name", "")
+        lastname = getattr(user, "lastname", "")
+        name = f"{name} {lastname}".strip() or name
+
+    return name or getattr(user, "email", None) or str(getattr(user, "pk", ""))
 
 
 class BatchProductionReportView(APIView):
@@ -35,6 +46,7 @@ class BatchProductionReportView(APIView):
             200: OpenApiResponse(description="Archivo PDF o Excel para descarga"),
             400: OpenApiResponse(description="Parámetros inválidos"),
             404: OpenApiResponse(description="Lote no encontrado"),
+            500: OpenApiResponse(description="Error interno al generar el reporte"),
         },
         summary="Generar reporte histórico del proceso productivo",
         description=(
@@ -59,12 +71,32 @@ class BatchProductionReportView(APIView):
         export_format = serializer.validated_data["format"]
         cycle_id = serializer.validated_data.get("cycle_id")
 
-        report_data = collect_production_report_data(
-            batch=batch,
-            modules=modules,
-            cycle_id=cycle_id,
-            user_display=_user_display(request.user),
-        )
+        try:
+            report_data = collect_production_report_data(
+                batch=batch,
+                modules=modules,
+                cycle_id=cycle_id,
+                user_display=_user_display(request.user),
+            )
+        except AttributeError as exc:
+            return Response(
+                {
+                    "detail": "Error al generar el reporte de producción.",
+                    "error": "User model missing expected field",
+                    "message": str(exc),
+                    "hint": "Revisa el modelo de usuario y los campos usados por el report generator.",
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        except Exception as exc:
+            return Response(
+                {
+                    "detail": "Error interno al generar el reporte de producción.",
+                    "error": exc.__class__.__name__,
+                    "message": str(exc),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
         if export_format == FORMAT_PDF:
             content = export_production_report_pdf(report_data)

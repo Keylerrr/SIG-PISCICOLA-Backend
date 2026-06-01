@@ -33,7 +33,7 @@ urlpatterns = [
         name="batch-set-status",
     ),
     path(
-        "farms/<int:farm_pk>/batches/<batch_pk>/production-report/",
+        "farms/<int:farm_pk>/batches/<int:batch_pk>/production-report/",
         BatchProductionReportView.as_view(),
         name="batch-production-report",
     ),
