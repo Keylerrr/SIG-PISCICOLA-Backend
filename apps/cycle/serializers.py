@@ -234,7 +234,6 @@ class CycleSerializer(serializers.ModelSerializer):
             ciclo_activo = (
                 Cycle.objects.filter(
                     farm=farm,
-                    specie=specie,
                     state=Cycle.State.IN_PROGRESS,
                     deleted_at__isnull=True,
                 )
@@ -244,7 +243,7 @@ class CycleSerializer(serializers.ModelSerializer):
 
             if ciclo_activo:
                 raise serializers.ValidationError(
-                    "Ya existe un ciclo activo para esta especie en esta granja. No se pueden crear dos ciclos activos simultáneamente."
+                    "Ya existe un ciclo activo en esta granja. No se pueden crear dos ciclos activos simultáneamente."
                 )
 
         if start_date and estimated_finish_date:
