@@ -19,8 +19,17 @@ from .serializers import ProductionReportRequestSerializer
 def _user_display(user) -> str:
     if not user or not user.is_authenticated:
         return ""
-    name = f"{user.first_name} {user.last_name}".strip()
-    return name or user.email or str(user.pk)
+
+    first_name = getattr(user, "first_name", None)
+    last_name = getattr(user, "last_name", None)
+    name = f"{first_name or ''} {last_name or ''}".strip()
+
+    if not name:
+        name = getattr(user, "name", "")
+        lastname = getattr(user, "lastname", "")
+        name = f"{name} {lastname}".strip() or name
+
+    return name or getattr(user, "email", None) or str(getattr(user, "pk", ""))
 
 
 class BatchProductionReportView(APIView):
