@@ -45,7 +45,7 @@ class BiomassCalculator:
         if biomass_gain_kg <= 0:
             return None
         if feed_consumed_kg <= 0:
-            return 0.0
+            return None
         return feed_consumed_kg / biomass_gain_kg
 
     @staticmethod
