@@ -104,22 +104,41 @@ class BiomassCalculator:
         return int(total)
 
     @staticmethod
+    def get_cycle_pond_total_quantity(cycle_id: int, pond_id: int) -> int:
+        """
+        Cantidad total de peces en lotes vinculados al ciclo/estanque.
+        """
+        from apps.cycle.models import CyclePondBatch
+
+        total = (
+            CyclePondBatch.objects.filter(
+                cycle_id=cycle_id,
+                pond_batch__pond_id=pond_id,
+            ).aggregate(total=Sum("quantity"))["total"]
+            or 0
+        )
+        return int(total)
+
+    @staticmethod
     def calculate_control_biomass(
         cycle_id: int,
         pond_id: int,
         avg_weight_g: float,
+        mortality_quantity: int = 0,
         fallback_live_quantity: int = 0,
     ) -> tuple[int, float]:
         """
-        Estima biomasa total para control usando stock vivo operativo.
+        Estima biomasa total para control usando lotes vinculados al ciclo.
 
         El muestreo aporta el peso promedio, pero la biomasa y el FCA deben
-        calcularse sobre todos los peces vivos del ciclo/estanque.
+        calcularse sobre todos los peces vinculados al ciclo menos las muertes.
         """
-        live_quantity = BiomassCalculator.get_cycle_pond_live_quantity(
+        total_quantity = BiomassCalculator.get_cycle_pond_total_quantity(
             cycle_id, pond_id
         )
-        if live_quantity <= 0:
+        if total_quantity > 0:
+            live_quantity = max(0, total_quantity - int(mortality_quantity or 0))
+        else:
             live_quantity = max(0, fallback_live_quantity)
 
         biomass_kg = BiomassCalculator.calculate_biomass(live_quantity, avg_weight_g)
@@ -334,6 +353,7 @@ class CycleStateCalculator:
             cycle_id,
             latest_evaluation.pond_id,
             avg_weight_g,
+            mortality_quantity=total_mortality,
             fallback_live_quantity=sample_live_quantity,
         )
 

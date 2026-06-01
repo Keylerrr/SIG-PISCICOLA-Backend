@@ -176,6 +176,7 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
             cycle.id,
             pond.id,
             fish_evaluated.avg_weight_g,
+            mortality_quantity=fish_evaluated.mortality_quantity,
             fallback_live_quantity=sample_live_quantity,
         )
         mortality_percentage = (
@@ -719,6 +720,7 @@ class ControlStatSerializer(serializers.ModelSerializer):
             cycle.id,
             pond.id,
             stats["avg_weight_g"],
+            mortality_quantity=stats["sampled_quantity"] - sample_live_quantity,
             fallback_live_quantity=sample_live_quantity,
         )
 
