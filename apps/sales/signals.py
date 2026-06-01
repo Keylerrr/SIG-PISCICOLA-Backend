@@ -30,7 +30,7 @@ def sale_created_alert(sender, instance, created, **kwargs):
             farm=instance.farm,
             source_type=Alert.SourceType.SALE,
             source_id=instance.id,
-            description=f"Venta {instance.invoice_number} creada",
+            description=f"Venta {instance.invoice_number} creada, tienes 15 minutos para editarla en caso de errores",
             message=message,
             severity=Alert.Severity.LOW,
         )

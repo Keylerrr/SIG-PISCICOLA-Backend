@@ -22,8 +22,8 @@ def treatment_event_alert(sender, instance: TreatmentEvent, created, **kwargs):
             cycle=instance.cycle,
             source_type=Alert.SourceType.HEALTH,
             source_id=instance.id,
-            description=f"TreatmentEvent pendiente ({instance.id})",
-            message=f"Evento de tratamiento programado para {instance.date} no cumplido.",
+            description=f"Evento de sanidad pendiente de ({instance.farm.name} en ({instance.cycle.name}))",
+            message=f"Evento de sanidad programado en ({instance.farm.name}) para ({instance.cycle.name})\nFecha {instance.date} no cumplido.",
             severity=Alert.Severity.MEDIUM,
         )
     else:
