@@ -13,6 +13,7 @@ from apps.purchases.utils import create_out_movement
 from apps.monitoring.services import BiomassCalculator
 
 
+from .constants import FEED_SCHEDULE_PRODUCT_TYPE_NAMES
 from .models import FeedingEvent, FeedingPlan, FeedingSchedule
 
 
@@ -330,6 +331,26 @@ def cycle_feed_consumed_kg(
     total = Decimal("0")
     for ev in qs:
         total += feed_quantity_to_kg(Decimal(str(ev.actual_quantity)), ev.actual_unit)
+
+    from apps.monitoring.models import ProductUsageLog
+
+    food_type_names = [name.casefold() for name in FEED_SCHEDULE_PRODUCT_TYPE_NAMES]
+    usage_qs = ProductUsageLog.objects.filter(
+        daily_stat__cycle_id=cycle_id,
+        daily_stat__deleted_at__isnull=True,
+        product__type_product__name__isnull=False,
+    ).select_related("unit", "product__type_product", "daily_stat")
+    if start_date is not None:
+        usage_qs = usage_qs.filter(daily_stat__stat_date__gte=start_date)
+    if end_date is not None:
+        usage_qs = usage_qs.filter(daily_stat__stat_date__lte=end_date)
+
+    for usage in usage_qs:
+        product_type_name = usage.product.type_product.name.casefold()
+        if not any(name in product_type_name for name in food_type_names):
+            continue
+        total += feed_quantity_to_kg(Decimal(str(usage.quantity_used)), usage.unit)
+
     return total.quantize(Decimal("0.01"))
 
 
