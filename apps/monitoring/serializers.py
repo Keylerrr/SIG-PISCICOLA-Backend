@@ -1,11 +1,10 @@
 from datetime import date
 
 from django.db import transaction
-from django.db.models import Avg, Max, Min, Sum
 from rest_framework import serializers
 
 from apps.batch.models import Batch, PondBatch
-from apps.cycle.models import Cycle
+from apps.cycle.models import Cycle, CyclePondBatch
 from apps.ponds.models import Pond
 from apps.products.models import Product
 from apps.purchases.models import InventoryMovement
@@ -47,6 +46,195 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["cycle", "pond", "avg_weight_g", "created_at", "updated_at"]
 
+    def _get_active_cycle_pond_batches(self, cycle, pond):
+        return list(
+            CyclePondBatch.objects.filter(
+                cycle=cycle,
+                pond_batch__pond=pond,
+                pond_batch__end_date__isnull=True,
+            )
+            .select_related("pond_batch", "pond_batch__batch")
+            .order_by("id")
+        )
+
+    def _get_mortality_targets(self, cycle, pond, batch_id=None):
+        cycle_pond_batches = self._get_active_cycle_pond_batches(cycle, pond)
+        if not cycle_pond_batches:
+            raise serializers.ValidationError(
+                {
+                    "mortality_quantity": (
+                        "No hay lotes activos del ciclo en este estanque para "
+                        "descontar mortalidad."
+                    )
+                }
+            )
+
+        pond_batches = [cpb.pond_batch for cpb in cycle_pond_batches]
+        if batch_id:
+            pond_batches = [pb for pb in pond_batches if pb.batch_id == batch_id]
+            if not pond_batches:
+                raise serializers.ValidationError(
+                    {
+                        "batch_id": (
+                            "El lote especificado no está activo en este ciclo y "
+                            "estanque."
+                        )
+                    }
+                )
+
+        return pond_batches
+
+    def _distribute_quantity(self, quantity, pond_batches, *, by_current_stock=True):
+        if quantity <= 0:
+            return []
+
+        if by_current_stock:
+            total_quantity = sum(pb.current_quantity for pb in pond_batches)
+        else:
+            total_quantity = 0
+
+        if total_quantity <= 0:
+            base = quantity // len(pond_batches)
+            remainder = quantity - (base * len(pond_batches))
+            return [
+                (pb, base + (1 if index < remainder else 0))
+                for index, pb in enumerate(pond_batches)
+            ]
+
+        reductions = []
+        total_reduced = 0
+        for pond_batch in pond_batches:
+            exact = quantity * (pond_batch.current_quantity / total_quantity)
+            reduce_int = int(exact)
+            reductions.append(
+                {
+                    "pond_batch": pond_batch,
+                    "quantity": reduce_int,
+                    "remainder": exact - reduce_int,
+                }
+            )
+            total_reduced += reduce_int
+
+        remaining = quantity - total_reduced
+        for reduction in sorted(
+            reductions, key=lambda item: item["remainder"], reverse=True
+        )[:remaining]:
+            reduction["quantity"] += 1
+
+        return [
+            (reduction["pond_batch"], reduction["quantity"])
+            for reduction in reductions
+        ]
+
+    def _apply_mortality_stock_change(
+        self, *, cycle, pond, quantity, batch_id=None, restore=False
+    ):
+        if quantity <= 0:
+            return
+
+        pond_batches = self._get_mortality_targets(cycle, pond, batch_id=batch_id)
+
+        if restore:
+            changes = self._distribute_quantity(
+                quantity, pond_batches, by_current_stock=True
+            )
+            for pond_batch, quantity_to_add in changes:
+                if quantity_to_add <= 0:
+                    continue
+                pond_batch.current_quantity += quantity_to_add
+                pond_batch.save(update_fields=["current_quantity"])
+            return
+
+        total_available = sum(pb.current_quantity for pb in pond_batches)
+        if quantity > total_available:
+            raise serializers.ValidationError(
+                {
+                    "mortality_quantity": (
+                        f"La mortalidad indicada ({quantity}) supera los peces "
+                        f"vivos disponibles ({total_available})."
+                    )
+                }
+            )
+
+        changes = self._distribute_quantity(quantity, pond_batches)
+        for pond_batch, quantity_to_reduce in changes:
+            if quantity_to_reduce <= 0:
+                continue
+            pond_batch.current_quantity -= quantity_to_reduce
+            pond_batch.save(update_fields=["current_quantity"])
+
+    def _refresh_cycle_control_stat(self, fish_evaluated, *, ignore_same_day=False):
+        cycle = fish_evaluated.cycle
+        pond = fish_evaluated.pond
+        evaluation_date = fish_evaluated.evaluation_date
+
+        sample_live_quantity = BiomassCalculator.get_sample_live_quantity(
+            fish_evaluated.sampled_quantity,
+            fish_evaluated.mortality_quantity,
+        )
+        live_quantity, biomass_kg = BiomassCalculator.calculate_control_biomass(
+            cycle.id,
+            pond.id,
+            fish_evaluated.avg_weight_g,
+            fallback_live_quantity=sample_live_quantity,
+        )
+        mortality_percentage = (
+            fish_evaluated.mortality_quantity / fish_evaluated.sampled_quantity * 100
+            if fish_evaluated.sampled_quantity > 0
+            else 0.0
+        )
+
+        if ignore_same_day:
+            previous_control = (
+                ControlStat.objects.filter(
+                    cycle_id=cycle.id,
+                    pond_id=pond.id,
+                    control_date__lt=evaluation_date,
+                    deleted_at__isnull=True,
+                )
+                .order_by("-control_date")
+                .first()
+            )
+        else:
+            previous_control = BiomassCalculator.get_previous_control_stat(
+                cycle.id, pond.id, evaluation_date
+            )
+
+        biomass_gain_kg = None
+        fca = None
+
+        if previous_control is not None:
+            biomass_gain_kg = BiomassCalculator.calculate_biomass_gain(
+                biomass_kg, previous_control.biomass_kg
+            )
+            from apps.feeding.utils import cycle_feed_consumed_kg
+
+            alimento_kg = cycle_feed_consumed_kg(
+                cycle_id=cycle.id,
+                start_date=previous_control.control_date,
+                end_date=evaluation_date,
+            )
+            fca = BiomassCalculator.calculate_fca(float(alimento_kg), biomass_gain_kg)
+
+        ControlStat.objects.update_or_create(
+            cycle=cycle,
+            pond=pond,
+            control_date=evaluation_date,
+            defaults={
+                "farm": cycle.farm,
+                "sampled_quantity": fish_evaluated.sampled_quantity,
+                "live_quantity": live_quantity,
+                "min_weight_g": fish_evaluated.min_weight_g,
+                "avg_weight_g": fish_evaluated.avg_weight_g,
+                "max_weight_g": fish_evaluated.max_weight_g,
+                "mortality_percentage": mortality_percentage,
+                "biomass_kg": biomass_kg,
+                "biomass_gain_kg": biomass_gain_kg,
+                "fca": fca,
+                "deleted_at": None,
+            },
+        )
+
     def validate(self, data):
         cycle = data.get("cycle") or (self.instance.cycle if self.instance else None)
         pond = data.get("pond") or (self.instance.pond if self.instance else None)
@@ -77,9 +265,10 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
 
         # Validar que el estanque está asociado al ciclo
         if cycle and pond:
-            cpb_exists = PondBatch.objects.filter(
-                pond=pond,
-                pond_batch__cycle_pond_batches__cycle=cycle,
+            cpb_exists = CyclePondBatch.objects.filter(
+                cycle=cycle,
+                pond_batch__pond=pond,
+                pond_batch__end_date__isnull=True,
             ).exists()
             if not cpb_exists:
                 raise serializers.ValidationError(
@@ -123,6 +312,7 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
 
         return data
 
+    @transaction.atomic
     def update(self, instance, validated_data):
         """
         ✓ NUEVA VALIDACIÓN: Prohibir editar evaluaciones de ciclos terminados
@@ -134,8 +324,36 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
             })
         
         # Proceder con la actualización
-        return super().update(instance, validated_data)
+        batch_id = validated_data.pop("batch_id", None)
+        previous_mortality = instance.mortality_quantity
 
+        min_weight = validated_data.get("min_weight_g", instance.min_weight_g)
+        max_weight = validated_data.get("max_weight_g", instance.max_weight_g)
+        validated_data["avg_weight_g"] = (min_weight + max_weight) / 2
+
+        fish_evaluated = super().update(instance, validated_data)
+
+        mortality_delta = fish_evaluated.mortality_quantity - previous_mortality
+        if mortality_delta > 0:
+            self._apply_mortality_stock_change(
+                cycle=fish_evaluated.cycle,
+                pond=fish_evaluated.pond,
+                quantity=mortality_delta,
+                batch_id=batch_id,
+            )
+        elif mortality_delta < 0:
+            self._apply_mortality_stock_change(
+                cycle=fish_evaluated.cycle,
+                pond=fish_evaluated.pond,
+                quantity=abs(mortality_delta),
+                batch_id=batch_id,
+                restore=True,
+            )
+
+        self._refresh_cycle_control_stat(fish_evaluated, ignore_same_day=True)
+        return fish_evaluated
+
+    @transaction.atomic
     def create(self, validated_data):
         """
         Crea FishEvaluated calculando avg_weight_g automáticamente.
@@ -168,154 +386,34 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
         elif pond is not None and validated_data.get("farm") is None:
             validated_data["farm"] = pond.farm
 
-        evaluation_date = validated_data.get("evaluation_date")
         mortality_quantity = validated_data.get("mortality_quantity", 0)
-        sampled_quantity = validated_data.get("sampled_quantity", 0)
 
         # Crear la evaluación
         fish_evaluated = super().create(validated_data)
 
-        # Descontar mortalidad
         if mortality_quantity > 0:
-            if batch_id:
-                # Mortalidad específica: descontar solo del batch especificado
-                pond_batch = PondBatch.objects.filter(
-                    batch_id=batch_id, pond=pond
-                ).first()
-                if pond_batch:
-                    pond_batch.current_quantity -= mortality_quantity
-                    if pond_batch.current_quantity < 0:
-                        pond_batch.current_quantity = 0
-                    pond_batch.save(update_fields=["current_quantity"])
+            self._apply_mortality_stock_change(
+                cycle=cycle,
+                pond=pond,
+                quantity=mortality_quantity,
+                batch_id=batch_id,
+            )
 
-                # Si es 100% de mortalidad, cambiar a DEAD
-                if sampled_quantity > 0 and mortality_quantity == sampled_quantity:
-                    batch = Batch.objects.get(id=batch_id)
-                    batch.status = Batch.Status.DEAD
-                    batch.save(update_fields=["status"])
-            else:
-                # Mortalidad general: descontar proporcionalmente de todos los batches del estanque
-                pond_batches = PondBatch.objects.filter(
-                    pond=pond, end_date__isnull=True
-                ).select_related("batch")
-
-                total_quantity = (
-                    pond_batches.aggregate(total=Sum("current_quantity"))["total"] or 0
-                )
-
-                if total_quantity > 0:
-                    # ✓ CORRECCIÓN: Usar algoritmo de "largest remainder method"
-                    # para no perder cantidad por truncado de decimales
-                    pond_batches_list = list(pond_batches)
-                    
-                    # Calcular reductions manteniendo decimales
-                    reductions = []
-                    total_reduced = 0
-                    
-                    for pond_batch in pond_batches_list:
-                        proportion = pond_batch.current_quantity / total_quantity
-                        quantity_to_reduce_exact = mortality_quantity * proportion
-                        quantity_to_reduce_int = int(quantity_to_reduce_exact)
-                        remainder = quantity_to_reduce_exact - quantity_to_reduce_int
-                        
-                        reductions.append({
-                            'pond_batch': pond_batch,
-                            'reduce_exact': quantity_to_reduce_exact,
-                            'reduce_int': quantity_to_reduce_int,
-                            'remainder': remainder
-                        })
-                        total_reduced += quantity_to_reduce_int
-                    
-                    # Distribuir los decimales remanentes al lote con mayor residuo
-                    remaining_to_distribute = mortality_quantity - total_reduced
-                    
-                    if remaining_to_distribute > 0:
-                        # Ordenar por remainder descendente
-                        reductions_sorted = sorted(reductions, key=lambda x: x['remainder'], reverse=True)
-                        
-                        # Distribuir el residuo entre los que tienen mayor resto
-                        for i in range(remaining_to_distribute):
-                            if i < len(reductions_sorted):
-                                reductions_sorted[i]['reduce_int'] += 1
-                    
-                    # Aplicar reductions
-                    for reduction in reductions:
-                        pond_batch = reduction['pond_batch']
-                        quantity_to_reduce = reduction['reduce_int']
-                        
-                        pond_batch.current_quantity -= quantity_to_reduce
-                        if pond_batch.current_quantity < 0:
-                            pond_batch.current_quantity = 0
-                        pond_batch.save(update_fields=["current_quantity"])
-
-        # Verificar si todos los batches del estanque están DEAD
-        all_pond_batches = PondBatch.objects.filter(
-            pond=pond, end_date__isnull=True
-        ).select_related("batch")
-
+        active_cycle_pond_batches = self._get_active_cycle_pond_batches(cycle, pond)
         all_dead = (
-            all_pond_batches.exclude(batch__status=Batch.Status.DEAD).count() == 0
+            active_cycle_pond_batches
+            and all(
+                cpb.pond_batch.current_quantity <= 0
+                for cpb in active_cycle_pond_batches
+            )
         )
 
-        if all_dead and all_pond_batches.exists():
+        if all_dead:
             # Si todos los batches del estanque están muertos, cancelar el ciclo
             cycle.state = Cycle.State.CANCELLED
             cycle.save(update_fields=["state"])
 
-        # ========== GENERAR CONTROL STAT AUTOMÁTICAMENTE ==========
-        evaluation_date = fish_evaluated.evaluation_date
-
-        # Biomasa según la muestra del muestreo (no el stock total del estanque)
-        live_quantity = BiomassCalculator.get_sample_live_quantity(
-            fish_evaluated.sampled_quantity,
-            fish_evaluated.mortality_quantity,
-        )
-        biomass_kg = BiomassCalculator.calculate_biomass(
-            live_quantity, fish_evaluated.avg_weight_g
-        )
-        mortality_percentage = (
-            fish_evaluated.mortality_quantity / fish_evaluated.sampled_quantity * 100
-            if fish_evaluated.sampled_quantity > 0
-            else 0.0
-        )
-
-        previous_control = BiomassCalculator.get_previous_control_stat(
-            cycle.id, pond.id, evaluation_date
-        )
-
-        biomass_gain_kg = None
-        fca = None
-
-        if previous_control is not None:
-            biomass_gain_kg = BiomassCalculator.calculate_biomass_gain(
-                biomass_kg, previous_control.biomass_kg
-            )
-            from apps.feeding.utils import cycle_feed_consumed_kg
-
-            alimento_kg = cycle_feed_consumed_kg(
-                cycle_id=cycle.id,
-                start_date=previous_control.control_date,
-                end_date=evaluation_date,
-            )
-            fca = BiomassCalculator.calculate_fca(float(alimento_kg), biomass_gain_kg)
-        # Crear o actualizar ControlStat del día usando solo el registro actual
-        control_stat, created = ControlStat.objects.update_or_create(
-            cycle=cycle,
-            pond=pond,
-            control_date=evaluation_date,
-            defaults={
-                "farm": cycle.farm,
-                "sampled_quantity": fish_evaluated.sampled_quantity,
-                "live_quantity": live_quantity,
-                "min_weight_g": fish_evaluated.min_weight_g,
-                "avg_weight_g": fish_evaluated.avg_weight_g,
-                "max_weight_g": fish_evaluated.max_weight_g,
-                "mortality_percentage": mortality_percentage,
-                "biomass_kg": biomass_kg,
-                "biomass_gain_kg": biomass_gain_kg,
-                "fca": fca,
-            },
-        )
+        self._refresh_cycle_control_stat(fish_evaluated)
 
         return fish_evaluated
 
@@ -434,9 +532,10 @@ class DailyStatSerializer(serializers.ModelSerializer):
 
         # Validar que el estanque está asociado al ciclo
         if cycle and pond:
-            cpb_exists = PondBatch.objects.filter(
-                pond=pond,
-                pond_batch__cycle_pond_batches__cycle=cycle,
+            cpb_exists = CyclePondBatch.objects.filter(
+                cycle=cycle,
+                pond_batch__pond=pond,
+                pond_batch__end_date__isnull=True,
             ).exists()
             if not cpb_exists:
                 raise serializers.ValidationError(
@@ -566,9 +665,10 @@ class ControlStatSerializer(serializers.ModelSerializer):
 
         # Validar que el estanque está asociado al ciclo
         if cycle and pond:
-            cpb_exists = PondBatch.objects.filter(
-                pond=pond,
-                pond_batch__cycle_pond_batches__cycle=cycle,
+            cpb_exists = CyclePondBatch.objects.filter(
+                cycle=cycle,
+                pond_batch__pond=pond,
+                pond_batch__end_date__isnull=True,
             ).exists()
             if not cpb_exists:
                 raise serializers.ValidationError(
@@ -614,9 +714,12 @@ class ControlStatSerializer(serializers.ModelSerializer):
         # Calcular estadísticas agregadas
         stats = FishEvaluatedCalculator.aggregate_fish_evaluations(evaluations)
 
-        live_quantity = stats["live_quantity"]
-        current_biomass = BiomassCalculator.calculate_biomass(
-            live_quantity, stats["avg_weight_g"]
+        sample_live_quantity = stats["live_quantity"]
+        live_quantity, current_biomass = BiomassCalculator.calculate_control_biomass(
+            cycle.id,
+            pond.id,
+            stats["avg_weight_g"],
+            fallback_live_quantity=sample_live_quantity,
         )
 
         previous_control = BiomassCalculator.get_previous_control_stat(

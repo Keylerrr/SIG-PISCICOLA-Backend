@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.response import Response
@@ -54,10 +55,46 @@ class FishEvaluatedViewSet(viewsets.ModelViewSet):
         pond_pk = self.kwargs.get("pond_pk")
         serializer.save(cycle_id=cycle_id, pond_id=pond_pk)
 
+    @transaction.atomic
     def destroy(self, request, *args, **kwargs):
         obj = self.get_object()
-        obj.deleted_at = timezone.now()
+        deleted_at = timezone.now()
+
+        serializer = self.get_serializer(obj)
+        if obj.mortality_quantity > 0:
+            serializer._apply_mortality_stock_change(
+                cycle=obj.cycle,
+                pond=obj.pond,
+                quantity=obj.mortality_quantity,
+                restore=True,
+            )
+
+        obj.deleted_at = deleted_at
         obj.save(update_fields=["deleted_at"])
+
+        remaining_evaluation = (
+            FishEvaluated.objects.filter(
+                cycle=obj.cycle,
+                pond=obj.pond,
+                evaluation_date=obj.evaluation_date,
+                deleted_at__isnull=True,
+            )
+            .exclude(pk=obj.pk)
+            .order_by("-updated_at")
+            .first()
+        )
+        if remaining_evaluation:
+            serializer._refresh_cycle_control_stat(
+                remaining_evaluation, ignore_same_day=True
+            )
+        else:
+            ControlStat.objects.filter(
+                cycle=obj.cycle,
+                pond=obj.pond,
+                control_date=obj.evaluation_date,
+                deleted_at__isnull=True,
+            ).update(deleted_at=deleted_at)
+
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
