@@ -8,6 +8,9 @@ from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, Tabl
 
 from .constants import MODULE_LABELS
 
+PAGE_MARGIN = 0.6 * inch
+AVAILABLE_WIDTH = letter[0] - 2 * PAGE_MARGIN
+
 
 def _styles():
     base = getSampleStyleSheet()
@@ -43,16 +46,21 @@ def _styles():
 def _records_to_table(records: list[dict]) -> Table | Paragraph:
     if not records:
         return Paragraph("Sin registros.", _styles()["body"])
+
+    style = _styles()["body"]
     keys = []
     for rec in records:
         for k in rec.keys():
             if k not in keys:
                 keys.append(k)
-    header = [k.replace("_", " ").title() for k in keys]
+
+    header = [Paragraph(k.replace("_", " ").title(), style) for k in keys]
     rows = [header]
     for rec in records:
-        rows.append([str(rec.get(k, "")) for k in keys])
-    table = Table(rows, repeatRows=1)
+        rows.append([Paragraph(str(rec.get(k, "")), style) for k in keys])
+
+    col_widths = [AVAILABLE_WIDTH / len(keys)] * len(keys)
+    table = Table(rows, colWidths=col_widths, repeatRows=1)
     table.setStyle(
         TableStyle(
             [
@@ -62,6 +70,8 @@ def _records_to_table(records: list[dict]) -> Table | Paragraph:
                 ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
                 ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f7fafc")]),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
             ]
         )
     )
@@ -120,7 +130,17 @@ def export_production_report_pdf(report_data: dict) -> bytes:
                 indicator["notes"],
             ]
         )
-    indicator_table = Table(indicator_rows, repeatRows=1)
+    style = _styles()["body"]
+    indicator_header = [Paragraph(text, style) for text in indicator_rows[0]]
+    indicator_rows[0] = indicator_header
+    for i in range(1, len(indicator_rows)):
+        indicator_rows[i] = [Paragraph(str(value), style) for value in indicator_rows[i]]
+
+    indicator_table = Table(
+        indicator_rows,
+        colWidths=[1.4 * inch, 0.7 * inch, 0.8 * inch, 1.2 * inch, 1.3 * inch, AVAILABLE_WIDTH - (1.4 + 0.7 + 0.8 + 1.2 + 1.3) * inch],
+        repeatRows=1,
+    )
     indicator_table.setStyle(
         TableStyle(
             [
@@ -130,6 +150,8 @@ def export_production_report_pdf(report_data: dict) -> bytes:
                 ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
                 ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f7fafc")]),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("ALIGN", (0, 0), (-1, -1), "LEFT"),
+                ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
             ]
         )
     )
@@ -144,7 +166,15 @@ def export_production_report_pdf(report_data: dict) -> bytes:
             cycle_rows.append(
                 [c["name"], c["pond"], c["state"], c["start_date"], c["finish_date"] or "—"]
             )
-        t = Table(cycle_rows, repeatRows=1)
+        style = _styles()["body"]
+        cycle_rows[0] = [Paragraph(text, style) for text in cycle_rows[0]]
+        for i in range(1, len(cycle_rows)):
+            cycle_rows[i] = [Paragraph(str(value), style) for value in cycle_rows[i]]
+        t = Table(
+            cycle_rows,
+            colWidths=[1.4 * inch, 1.2 * inch, 0.8 * inch, 1.0 * inch, 1.4 * inch],
+            repeatRows=1,
+        )
         t.setStyle(
             TableStyle(
                 [
@@ -152,6 +182,8 @@ def export_production_report_pdf(report_data: dict) -> bytes:
                     ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
                     ("FONTSIZE", (0, 0), (-1, -1), 8),
                     ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("WORDWRAP", (0, 0), (-1, -1), "CJK"),
                 ]
             )
         )
