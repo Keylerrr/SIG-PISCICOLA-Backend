@@ -1,5 +1,7 @@
 # serializers.py
 
+from decimal import Decimal
+
 from django.db import transaction
 from django.utils import timezone
 from rest_framework import serializers
@@ -420,7 +422,9 @@ class HarvestSerializer(serializers.ModelSerializer):
             sources = classification_data.pop("sources", None)
             fish_count = classification_data.get("fish_count")
             if fish_count and harvest.avg_weight_g:
-                expected_weight = Decimal(fish_count) * harvest.avg_weight_g
+                expected_weight = Decimal(str(fish_count)) * Decimal(
+                    str(harvest.avg_weight_g)
+                )
                 classification_data["total_weight_g"] = expected_weight
             classification = HarvestClassification.objects.create(
                 harvest=harvest,

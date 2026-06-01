@@ -295,7 +295,16 @@ def get_classification_available_fish_count(
     classification: HarvestClassification,
 ) -> int:
     derived = get_classification_derived_fish_count(classification.id)
-    return max(classification.fish_count - derived, 0)
+    SaleDetail = apps.get_model("sales", "SaleDetail")
+    sold = (
+        SaleDetail.objects.filter(
+            harvest_classification=classification,
+            fish_count__isnull=False,
+        ).aggregate(total=Sum("fish_count"))["total"]
+        or 0
+    )
+
+    return max(classification.fish_count - derived - sold, 0)
 
 
 def get_classification_available_weight_g(
