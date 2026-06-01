@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 
 from django.db import transaction
 from rest_framework import serializers
@@ -58,26 +58,55 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
 
-    def _calculate_evaluation_biomass(self, obj):
-        sample_live_quantity = BiomassCalculator.get_sample_live_quantity(
-            obj.sampled_quantity,
-            obj.mortality_quantity,
-        )
-        return BiomassCalculator.calculate_control_biomass(
-            obj.cycle_id,
-            obj.pond_id,
-            obj.avg_weight_g,
-            mortality_quantity=obj.mortality_quantity,
-            fallback_live_quantity=sample_live_quantity,
-        )
+    #    def _calculate_evaluation_biomass(self, obj):
+    #        sample_live_quantity = BiomassCalculator.get_sample_live_quantity(
+    #            obj.sampled_quantity,
+    #            obj.mortality_quantity,
+    #        )
+    #        return BiomassCalculator.calculate_control_biomass(
+    #            obj.cycle_id,
+    #            obj.pond_id,
+    #            obj.avg_weight_g,
+    #            mortality_quantity=obj.mortality_quantity,
+    #            fallback_live_quantity=sample_live_quantity,
+    #        )
+
+    #    def get_live_quantity(self, obj):
+    #        live_quantity, _ = self._calculate_evaluation_biomass(obj)
+    #        return live_quantity
+    #
+    #    def get_biomass_kg(self, obj):
+    #        _, biomass_kg = self._calculate_evaluation_biomass(obj)
+    #        return biomass_kg
+
+    def _get_control_stat(self, obj):
+        return ControlStat.objects.filter(
+            cycle_id=obj.cycle_id,
+            pond_id=obj.pond_id,
+            control_date=obj.evaluation_date,
+            deleted_at__isnull=True,
+        ).first()
 
     def get_live_quantity(self, obj):
-        live_quantity, _ = self._calculate_evaluation_biomass(obj)
-        return live_quantity
+        cs = self._get_control_stat(obj)
+        if cs:
+            return cs.live_quantity
+        return BiomassCalculator.get_sample_live_quantity(
+            obj.sampled_quantity, obj.mortality_quantity
+        )
 
     def get_biomass_kg(self, obj):
-        _, biomass_kg = self._calculate_evaluation_biomass(obj)
-        return biomass_kg
+        cs = self._get_control_stat(obj)
+        if cs:
+            return cs.biomass_kg
+        live_qty = BiomassCalculator.get_cycle_pond_live_quantity(
+            obj.cycle_id, obj.pond_id
+        )
+        if live_qty <= 0:
+            live_qty = BiomassCalculator.get_sample_live_quantity(
+                obj.sampled_quantity, obj.mortality_quantity
+            )
+        return BiomassCalculator.calculate_biomass(live_qty, obj.avg_weight_g)
 
     def _get_active_cycle_pond_batches(self, cycle, pond):
         return list(
@@ -155,8 +184,7 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
             reduction["quantity"] += 1
 
         return [
-            (reduction["pond_batch"], reduction["quantity"])
-            for reduction in reductions
+            (reduction["pond_batch"], reduction["quantity"]) for reduction in reductions
         ]
 
     def _apply_mortality_stock_change(
@@ -353,10 +381,12 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
         """
         # Verificar que el ciclo NO esté en estado FINISHED o CANCELLED
         if instance.cycle.state in [Cycle.State.FINISHED, Cycle.State.CANCELLED]:
-            raise serializers.ValidationError({
-                "detail": "No se puede editar registros de monitoreo de ciclos que ya están terminados o cancelados."
-            })
-        
+            raise serializers.ValidationError(
+                {
+                    "detail": "No se puede editar registros de monitoreo de ciclos que ya están terminados o cancelados."
+                }
+            )
+
         # Proceder con la actualización
         batch_id = validated_data.pop("batch_id", None)
         previous_mortality = instance.mortality_quantity
@@ -434,12 +464,8 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
             )
 
         active_cycle_pond_batches = self._get_active_cycle_pond_batches(cycle, pond)
-        all_dead = (
-            active_cycle_pond_batches
-            and all(
-                cpb.pond_batch.current_quantity <= 0
-                for cpb in active_cycle_pond_batches
-            )
+        all_dead = active_cycle_pond_batches and all(
+            cpb.pond_batch.current_quantity <= 0 for cpb in active_cycle_pond_batches
         )
 
         if all_dead:
@@ -447,7 +473,7 @@ class FishEvaluatedSerializer(serializers.ModelSerializer):
             cycle.state = Cycle.State.CANCELLED
             cycle.save(update_fields=["state"])
 
-        self._refresh_cycle_control_stat(fish_evaluated)
+        self._refresh_cycle_control_stat(fish_evaluated, ignore_same_day=True)
 
         return fish_evaluated
 

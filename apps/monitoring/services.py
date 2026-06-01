@@ -1,5 +1,6 @@
-from typing import Optional, Dict, TYPE_CHECKING
-from django.db.models import QuerySet, Sum, Avg, Min, Max
+from typing import TYPE_CHECKING, Dict, Optional
+
+from django.db.models import Avg, Max, Min, QuerySet, Sum
 
 from apps.purchases.models import InventoryMovement
 
@@ -30,7 +31,9 @@ class BiomassCalculator:
         return (live_quantity * avg_weight_g) / 1000
 
     @staticmethod
-    def calculate_fca(feed_consumed_kg: float, biomass_gain_kg: float) -> Optional[float]:
+    def calculate_fca(
+        feed_consumed_kg: float, biomass_gain_kg: float
+    ) -> Optional[float]:
         """
         Calcula el Factor de Conversión Alimenticia (FCA).
         FCA = alimento consumido / ganancia de biomasa
@@ -80,8 +83,9 @@ class BiomassCalculator:
         from apps.batch.models import PondBatch
 
         total = (
-            PondBatch.objects.filter(pond_id=pond_id, end_date__isnull=True)
-            .aggregate(total=Sum("current_quantity"))["total"]
+            PondBatch.objects.filter(pond_id=pond_id, end_date__isnull=True).aggregate(
+                total=Sum("current_quantity")
+            )["total"]
             or 0
         )
         return int(total)
@@ -127,23 +131,12 @@ class BiomassCalculator:
         mortality_quantity: int = 0,
         fallback_live_quantity: int = 0,
     ) -> tuple[int, float]:
-        """
-        Estima biomasa total para control usando lotes vinculados al ciclo.
 
-        El muestreo aporta el peso promedio, pero la biomasa y el FCA deben
-        calcularse sobre todos los peces vinculados al ciclo menos las muertes.
-        """
-        total_quantity = BiomassCalculator.get_cycle_pond_total_quantity(
+        live_quantity = BiomassCalculator.get_cycle_pond_live_quantity(
             cycle_id, pond_id
         )
-        if total_quantity > 0:
-            live_quantity = max(0, total_quantity - int(mortality_quantity or 0))
-        else:
-            live_quantity = BiomassCalculator.get_cycle_pond_live_quantity(
-                cycle_id, pond_id
-            )
-            if live_quantity <= 0:
-                live_quantity = max(0, fallback_live_quantity)
+        if live_quantity <= 0:
+            live_quantity = max(0, fallback_live_quantity)
 
         biomass_kg = BiomassCalculator.calculate_biomass(live_quantity, avg_weight_g)
         return live_quantity, biomass_kg
@@ -194,15 +187,14 @@ class BiomassCalculator:
             - min_weight_g: Peso mínimo de los lotes activos
             - avg_weight_g: Peso promedio (promedio de promedios)
             - max_weight_g: Peso máximo de los lotes activos
-            
+
             Si no hay lotes activos, retorna ceros
         """
         from apps.batch.models import PondBatch
 
         # Obtener todos los lotes activos en el estanque
         active_pond_batches = PondBatch.objects.filter(
-            pond_id=pond_id,
-            end_date__isnull=True
+            pond_id=pond_id, end_date__isnull=True
         ).select_related("batch")
 
         if not active_pond_batches.exists():
@@ -272,9 +264,7 @@ class FishEvaluatedCalculator:
         live_quantity = sampled_quantity - total_mortality
 
         mortality_percentage = (
-            (total_mortality / sampled_quantity * 100)
-            if sampled_quantity > 0
-            else 0.0
+            (total_mortality / sampled_quantity * 100) if sampled_quantity > 0 else 0.0
         )
 
         return {
@@ -314,12 +304,11 @@ class CycleStateCalculator:
         Returns:
             Dict con el estado actual del ciclo
         """
-        from .models import FishEvaluated, ControlStat
+        from .models import ControlStat, FishEvaluated
 
         # Obtener todas las evaluaciones de peces del ciclo (no eliminadas)
         evaluations = FishEvaluated.objects.filter(
-            cycle_id=cycle_id,
-            deleted_at__isnull=True
+            cycle_id=cycle_id, deleted_at__isnull=True
         ).order_by("-evaluation_date")
 
         if not evaluations.exists():
@@ -363,16 +352,13 @@ class CycleStateCalculator:
 
         total_fish_seen = live_quantity + total_mortality
         mortality_percentage = (
-            (total_mortality / total_fish_seen * 100)
-            if total_fish_seen > 0
-            else 0.0
+            (total_mortality / total_fish_seen * 100) if total_fish_seen > 0 else 0.0
         )
 
         # Calcular FCA si hay datos suficientes (2+ ControlStats)
         fca = None
         control_stats = ControlStat.objects.filter(
-            cycle_id=cycle_id,
-            deleted_at__isnull=True
+            cycle_id=cycle_id, deleted_at__isnull=True
         ).order_by("-control_date")
 
         if control_stats.count() >= 2:
@@ -382,6 +368,7 @@ class CycleStateCalculator:
 
         # Calcular días desde el inicio del ciclo
         from apps.cycle.models import Cycle
+
         cycle = Cycle.objects.get(id=cycle_id)
         days_elapsed = (latest_evaluation.evaluation_date - cycle.start_date).days
 
@@ -412,21 +399,18 @@ class CycleStateCalculator:
         Returns:
             True si hay datos de monitoring, False en caso contrario
         """
-        from .models import FishEvaluated, DailyStat, ControlStat
+        from .models import ControlStat, DailyStat, FishEvaluated
 
         has_fish_eval = FishEvaluated.objects.filter(
-            cycle_id=cycle_id,
-            deleted_at__isnull=True
+            cycle_id=cycle_id, deleted_at__isnull=True
         ).exists()
 
         has_daily = DailyStat.objects.filter(
-            cycle_id=cycle_id,
-            deleted_at__isnull=True
+            cycle_id=cycle_id, deleted_at__isnull=True
         ).exists()
 
         has_control = ControlStat.objects.filter(
-            cycle_id=cycle_id,
-            deleted_at__isnull=True
+            cycle_id=cycle_id, deleted_at__isnull=True
         ).exists()
 
         return has_fish_eval or has_daily or has_control
