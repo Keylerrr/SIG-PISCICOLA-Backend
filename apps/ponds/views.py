@@ -241,3 +241,41 @@ class PondMemberDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PondInactivateView(APIView):
+
+    def get_permissions(self):
+        return [AdminOr(CanManagePond)()]
+
+    def patch(self, request, farm_id, pond_id):
+        farm = _get_farm(farm_id)
+        if not farm:
+            return _farm_not_found_response()
+
+        pond = get_pond_or_404(farm, pond_id)
+        if not pond:
+            return _pond_not_found_response()
+
+        pond.status = Pond.Status.INACTIVE
+        pond.save(update_fields=["status"])
+        return Response(PondSerializer(pond).data)
+
+
+class PondActivateView(APIView):
+
+    def get_permissions(self):
+        return [AdminOr(CanManagePond)()]
+
+    def patch(self, request, farm_id, pond_id):
+        farm = _get_farm(farm_id)
+        if not farm:
+            return _farm_not_found_response()
+
+        pond = get_pond_or_404(farm, pond_id)
+        if not pond:
+            return _pond_not_found_response()
+
+        pond.status = Pond.Status.ACTIVE
+        pond.save(update_fields=["status"])
+        return Response(PondSerializer(pond).data)

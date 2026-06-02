@@ -31,6 +31,14 @@ class PondSerializer(serializers.ModelSerializer):
         name = data.get("name", getattr(self.instance, "name", None))
         code = data.get("code", getattr(self.instance, "code", None))
 
+        # Validar que no se pueda modificar un estanque inactivo (excepto el status)
+        if self.instance and self.instance.status == Pond.Status.INACTIVE:
+            # Permitir cambiar el status, pero no otros campos
+            if any(key != "status" for key in data.keys()):
+                raise serializers.ValidationError(
+                    "No se puede modificar un estanque inactivo. Solo se puede cambiar su estado a activo."
+                )
+
         qs_name = Pond.objects.filter(
             farm=farm, name__iexact=name, deleted_at__isnull=True
         )
