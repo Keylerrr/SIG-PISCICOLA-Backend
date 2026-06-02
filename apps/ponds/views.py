@@ -257,6 +257,13 @@ class PondInactivateView(APIView):
         if not pond:
             return _pond_not_found_response()
 
+        # Evitar inactivar un estanque en uso
+        if pond.status == Pond.Status.IN_USE:
+            return Response(
+                {"detail": "No se puede inactivar un estanque que está en uso. Debe terminar los ciclos y lotes activos primero."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         pond.status = Pond.Status.INACTIVE
         pond.save(update_fields=["status"])
         return Response(PondSerializer(pond).data)
