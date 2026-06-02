@@ -35,6 +35,8 @@ def _serialize_batch(batch: Batch) -> dict:
         "min_weight_g": batch.min_weight_g,
         "avg_weight_g": batch.avg_weight_g,
         "max_weight_g": batch.max_weight_g,
+        "farm_id": batch.farm_id,
+        "farm_name": str(batch.farm),
         "created_at": batch.created_at.isoformat() if batch.created_at else None,
     }
 
