@@ -64,16 +64,28 @@ class PondSerializer(serializers.ModelSerializer):
             )
 
         if area is not None:
-            current_total = (
-                Pond.objects.filter(farm=farm, deleted_at__isnull=True)
-                .exclude(pk=getattr(self.instance, "pk", None))
-                .aggregate(total=Sum("area"))["total"]
-                or Decimal("0")
-            )
-            total_area = current_total + Decimal(str(area))
-            farm_total_area = Decimal(str(farm.total_area_ha))
+            farm_total_area_ha = Decimal(str(farm.total_area_ha))
 
-            if total_area > farm_total_area:
+            def to_hectares(value):
+                value_decimal = Decimal(str(value))
+                if value_decimal > farm_total_area_ha * Decimal("10000"):
+                    return value_decimal / Decimal("10000")
+                return value_decimal
+
+            current_total = sum(
+                (
+                    to_hectares(value)
+                    for value in Pond.objects.filter(
+                        farm=farm, deleted_at__isnull=True
+                    )
+                    .exclude(pk=getattr(self.instance, "pk", None))
+                    .values_list("area", flat=True)
+                ),
+                Decimal("0"),
+            )
+            total_area = current_total + to_hectares(area)
+
+            if total_area > farm_total_area_ha:
                 raise serializers.ValidationError(
                     "El área total de los estanques supera el área total de la granja."
                 )
