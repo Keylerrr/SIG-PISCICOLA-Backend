@@ -1,6 +1,9 @@
 # serializers.py
 
+from decimal import Decimal
+
 from django.apps import apps
+from django.db.models import Sum
 from rest_framework import serializers
 
 from .models import Pond, UserFarmPond
@@ -30,6 +33,7 @@ class PondSerializer(serializers.ModelSerializer):
         farm = self.context["farm"]
         name = data.get("name", getattr(self.instance, "name", None))
         code = data.get("code", getattr(self.instance, "code", None))
+        area = data.get("area", getattr(self.instance, "area", None))
 
         # Validar que no se pueda modificar un estanque inactivo (excepto el status)
         if self.instance and self.instance.status == Pond.Status.INACTIVE:
@@ -58,6 +62,22 @@ class PondSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"code": "Ya existe un estanque con este código en la granja."}
             )
+
+        if area is not None:
+            current_total = (
+                Pond.objects.filter(farm=farm, deleted_at__isnull=True)
+                .exclude(pk=getattr(self.instance, "pk", None))
+                .aggregate(total=Sum("area"))["total"]
+                or Decimal("0")
+            )
+            total_area = current_total + Decimal(str(area))
+            farm_total_area = Decimal(str(farm.total_area_ha))
+
+            if total_area > farm_total_area:
+                raise serializers.ValidationError(
+                    "El área total de los estanques supera el área total de la granja."
+                )
+
         return data
 
 
